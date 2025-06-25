@@ -53,25 +53,31 @@ class AuthService {
     this.notifyListeners();
   }
 
-  private setSupabaseContext(token: string) {
-    // Set the token in Supabase context for RLS
-    supabase.rpc('set_config', {
-      setting_name: 'app.current_user_token',
-      setting_value: token,
-      is_local: true
-    }).catch(() => {
-      // Ignore errors for this context setting
-    });
+  private async setSupabaseContext(token: string) {
+    try {
+      // Set the token in Supabase context for RLS
+      await supabase.rpc('set_config', {
+        setting_name: 'app.current_user_token',
+        setting_value: token,
+        is_local: true
+      });
+    } catch (error) {
+      // Ignore errors for this context setting as it's not critical
+      console.warn('Failed to set Supabase context:', error);
+    }
   }
 
-  private clearSupabaseContext() {
-    supabase.rpc('set_config', {
-      setting_name: 'app.current_user_token',
-      setting_value: '',
-      is_local: true
-    }).catch(() => {
-      // Ignore errors for this context setting
-    });
+  private async clearSupabaseContext() {
+    try {
+      await supabase.rpc('set_config', {
+        setting_name: 'app.current_user_token',
+        setting_value: '',
+        is_local: true
+      });
+    } catch (error) {
+      // Ignore errors for this context setting as it's not critical
+      console.warn('Failed to clear Supabase context:', error);
+    }
   }
 
   private notifyListeners() {
