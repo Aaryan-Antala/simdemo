@@ -11,7 +11,7 @@ const ThemeToggle: React.FC = () => {
       className={
         isDark
           ? "glass-panel border-white rounded-lg p-2 glass-panel-hover transition-all duration-200"
-          : "glass-panel  rounded-lg p-2 glass-panel-hover transition-all duration-200"
+          : "glass-panel border-black rounded-lg p-2 glass-panel-hover transition-all duration-200"
       }
     >
       {isDark ? (
