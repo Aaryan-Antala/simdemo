@@ -1,0 +1,53 @@
+{
+  "name": "simally-backend",
+  "version": "1.0.0",
+  "description": "SimAlly Backend - Game & AI Assistant Services",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "start:ai": "node ai-assistant.js",
+    "dev:ai": "nodemon ai-assistant.js",
+    "start:media": "node media-server.js",
+    "dev:media": "nodemon media-server.js",
+    "start:workspace": "node workspace-api.js",
+    "dev:workspace": "nodemon workspace-api.js",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:ai\" \"npm run dev:media\" \"npm run dev:workspace\""
+  },
+  "dependencies": {
+    "@daily-co/daily-js": "^0.56.0",
+    "@google/generative-ai": "^0.2.1",
+    "@supabase/supabase-js": "^2.50.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "fs-extra": "^11.3.0",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^126.0.1",
+    "mediasoup": "^3.13.24",
+    "node-fetch": "^2.7.0",
+    "simple-peer": "^9.11.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "simally",
+    "backend",
+    "express",
+    "tavus",
+    "gemini",
+    "gmail",
+    "mediasoup",
+    "supabase",
+    "workspace",
+    "latex",
+    "pdf"
+  ],
+  "author": "SimAlly Team",
+  "license": "MIT"
+}
