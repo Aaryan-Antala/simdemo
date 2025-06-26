@@ -13,7 +13,6 @@ import MeetingControls from '../components/MeetingControls';
 import MediasoupMeeting from '../components/MediasoupMeeting';
 import GlassCard from '../components/ui/GlassCard';
 import Button from '../components/ui/Button';
-
 const VITE_AI_API_URL = import.meta.env.VITE_AI_API_URL;
 const VITE_API_URL = import.meta.env.VITE_API_URL;
 const VITE_MEDIA_API_URL = import.meta.env.VITE_MEDIA_API_URL;
@@ -690,20 +689,18 @@ const WorkspacePage: React.FC = () => {
             {activePanel === 'meeting' && (
               <motion.div 
                 key="meeting-panel"
-                className="flex-1 flex flex-col h-full"
+                className="flex-1 flex flex-col"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.2 }}
               >
                 {currentMeeting ? (
-                  <div className="flex-1 h-full">
-                    <MediasoupMeeting
-                      roomName={currentMeeting.roomName}
-                      displayName={currentMeeting.displayName}
-                      onLeave={handleLeaveMeeting}
-                    />
-                  </div>
+                  <MediasoupMeeting
+                    roomName={currentMeeting.roomName}
+                    displayName={currentMeeting.displayName}
+                    onLeave={handleLeaveMeeting}
+                  />
                 ) : (
                   <div className="flex-1 flex items-center justify-center p-8">
                     <div className="max-w-2xl mx-auto text-center">

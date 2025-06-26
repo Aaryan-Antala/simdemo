@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Device } from 'mediasoup-client';
 import io from 'socket.io-client';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText, Download, Users, Settings, Share2, Copy, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText, Download, Users, Settings, Share2, Copy, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlassCard from './ui/GlassCard';
 import Button from './ui/Button';
-
 const VITE_AI_API_URL = import.meta.env.VITE_AI_API_URL;
 const VITE_API_URL = import.meta.env.VITE_API_URL;
 const VITE_MEDIA_API_URL = import.meta.env.VITE_MEDIA_API_URL;
@@ -68,7 +67,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [producerToPeer, setProducerToPeer] = useState<Map<string, string>>(new Map());
   const [copied, setCopied] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Initialize socket connection
   useEffect(() => {
@@ -490,6 +488,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     }
   };
 
+
   // Update producerToPeer mapping when receiving producers
   const handleProducers = (producers: any[]) => {
     console.log('Received existing producers:', producers);
@@ -876,21 +875,6 @@ See you there!`);
     onLeave();
   };
 
-  // Calculate video grid layout
-  const totalParticipants = peers.size + 1; // +1 for local user
-  const getVideoGridCols = () => {
-    if (totalParticipants === 1) return 1;
-    if (totalParticipants === 2) return 2;
-    if (totalParticipants <= 4) return 2;
-    if (totalParticipants <= 6) return 3;
-    return 4;
-  };
-
-  const getVideoGridRows = () => {
-    const cols = getVideoGridCols();
-    return Math.ceil(totalParticipants / cols);
-  };
-
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-primary flex items-center justify-center">
@@ -908,17 +892,17 @@ See you there!`);
   }
 
   return (
-    <div className="h-screen flex flex-col bg-primary overflow-hidden">
+    <div className="h-screen flex flex-col bg-primary">
       {/* Meeting Header - Fixed at top */}
-      <div className="glass-panel border-b silver-border p-4 flex-shrink-0 z-50">
-        <div className="flex items-center justify-between">
+      <div className="glass-panel border-b silver-border p-4 flex-shrink-0">
+        <div className="flex justify-between items-center">
           <div className="flex items-center space-x-4">
             <h1 className="text-lg font-bold gradient-gold-silver">
               Meeting: {roomName}
             </h1>
             <div className="flex items-center space-x-2 text-sm text-secondary">
               <Users className="w-4 h-4" />
-              <span>{totalParticipants} participant{totalParticipants !== 1 ? 's' : ''}</span>
+              <span>{peers.size + 1} participants</span>
             </div>
           </div>
 
@@ -931,19 +915,19 @@ See you there!`);
               className="flex items-center space-x-2"
             >
               {isAIEnabled ? <Bot className="w-4 h-4" /> : <BotOff className="w-4 h-4" />}
-              <span className="hidden sm:inline">{isAIEnabled ? 'AI On' : 'AI Off'}</span>
+              <span>{isAIEnabled ? 'AI On' : 'AI Off'}</span>
             </Button>
 
             {/* Transcript Toggle */}
             {isAIEnabled && (
               <Button
                 onClick={() => setShowTranscript(!showTranscript)}
-                variant={showTranscript ? "premium" : "secondary"}
+                variant="secondary"
                 size="sm"
                 className="flex items-center space-x-2"
               >
                 <FileText className="w-4 h-4" />
-                <span className="hidden sm:inline">Transcript ({transcript.length})</span>
+                <span>Transcript ({transcript.length})</span>
               </Button>
             )}
 
@@ -951,12 +935,12 @@ See you there!`);
             {isAIEnabled && (
               <Button
                 onClick={() => setShowNotes(!showNotes)}
-                variant={showNotes ? "premium" : "secondary"}
+                variant="secondary"
                 size="sm"
                 className="flex items-center space-x-2"
               >
                 <FileText className="w-4 h-4" />
-                <span className="hidden sm:inline">Notes ({notes.length})</span>
+                <span>Notes ({notes.length})</span>
               </Button>
             )}
 
@@ -968,7 +952,7 @@ See you there!`);
               className="flex items-center space-x-2"
             >
               <Share2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Invite</span>
+              <span>Invite Others</span>
             </Button>
 
             {/* Leave Meeting */}
@@ -979,31 +963,19 @@ See you there!`);
               className="flex items-center space-x-2 bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
             >
               <PhoneOff className="w-4 h-4 text-red-400" />
-              <span className="hidden sm:inline text-red-400">Leave</span>
+              <span className="text-red-400">Leave</span>
             </Button>
           </div>
         </div>
       </div>
 
       {/* Main Meeting Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Video Grid Area */}
-        <div className={`flex-1 p-4 transition-all duration-300 ${
-          (showTranscript || showNotes) ? 'mr-0' : ''
-        }`}>
-          <div 
-            className={`grid gap-4 h-full`}
-            style={{
-              gridTemplateColumns: `repeat(${getVideoGridCols()}, 1fr)`,
-              gridTemplateRows: `repeat(${getVideoGridRows()}, 1fr)`
-            }}
-          >
+      <div className="flex-1 flex">
+        {/* Video Grid */}
+        <div className="flex-1 p-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full">
             {/* Local Video */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="relative glass-panel rounded-lg overflow-hidden group"
-            >
+            <div className="relative glass-panel rounded-lg overflow-hidden">
               <video
                 ref={handleLocalVideoRef}
                 key={
@@ -1022,34 +994,17 @@ See you there!`);
               />
               {!isVideoEnabled && (
                 <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-                  <div className="text-center">
-                    <VideoOff className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-gray-400 text-sm">Camera Off</p>
-                  </div>
+                  <VideoOff className="w-8 h-8 text-gray-400" />
                 </div>
               )}
-              <div className="absolute bottom-2 left-2 glass-panel px-3 py-1 rounded-full text-sm">
+              <div className="absolute bottom-2 left-2 glass-panel px-2 py-1 rounded text-sm">
                 <span className="text-primary font-medium">{displayName} (You)</span>
               </div>
-              {/* Audio indicator */}
-              <div className="absolute top-2 right-2">
-                {!isAudioEnabled && (
-                  <div className="glass-panel p-1 rounded-full bg-red-500/20">
-                    <MicOff className="w-4 h-4 text-red-400" />
-                  </div>
-                )}
-              </div>
-            </motion.div>
+            </div>
 
             {/* Remote Videos */}
-            {Array.from(peers.values()).map((peer, index) => (
-              <motion.div
-                key={peer.id}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: index * 0.1 }}
-                className="relative glass-panel rounded-lg overflow-hidden group"
-              >
+            {Array.from(peers.values()).map((peer) => (
+              <div key={peer.id} className="relative glass-panel rounded-lg overflow-hidden">
                 <video
                   id={`remote-video-${peer.id}`}
                   autoPlay
@@ -1061,31 +1016,27 @@ See you there!`);
                   autoPlay
                   playsInline
                 />
-                <div className="absolute bottom-2 left-2 glass-panel px-3 py-1 rounded-full text-sm">
+                <div className="absolute bottom-2 left-2 glass-panel px-2 py-1 rounded text-sm">
                   <span className="text-primary font-medium">{peer.displayName}</span>
                 </div>
-              </motion.div>
+              </div>
             ))}
 
             {/* Placeholder for when no remote participants */}
-            {peers.size === 0 && totalParticipants === 1 && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="relative glass-panel rounded-lg overflow-hidden flex items-center justify-center col-span-full"
-              >
+            {peers.size === 0 && (
+              <div className="relative glass-panel rounded-lg overflow-hidden flex items-center justify-center">
                 <div className="text-center">
-                  <Users className="w-16 h-16 text-secondary mx-auto mb-4 opacity-50" />
-                  <p className="text-secondary text-lg mb-2">Waiting for others to join...</p>
-                  <p className="text-xs text-secondary">Share the room name: <span className="font-medium text-primary">{roomName}</span></p>
+                  <Users className="w-12 h-12 text-secondary mx-auto mb-4 opacity-50" />
+                  <p className="text-secondary">Waiting for others to join...</p>
+                  <p className="text-xs text-secondary mt-2">Share the room name: <span className="font-medium text-primary">{roomName}</span></p>
                 </div>
-              </motion.div>
+              </div>
             )}
           </div>
 
           {/* AI Status Overlay */}
           {isAIEnabled && (
-            <div className="absolute top-20 left-8 glass-panel px-3 py-2 rounded-lg z-40">
+            <div className="absolute top-8 left-8 glass-panel px-3 py-2 rounded-lg">
               <div className="flex items-center space-x-2">
                 <div className={`w-2 h-2 rounded-full ${isTranscribing ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
                 <span className="text-sm text-primary font-medium">
@@ -1097,7 +1048,7 @@ See you there!`);
 
           {/* Processing Indicator */}
           {isProcessing && (
-            <div className="absolute top-20 right-8 glass-panel px-3 py-2 rounded-lg z-40">
+            <div className="absolute top-8 right-8 glass-panel px-3 py-2 rounded-lg">
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-4 border-2 border-gold-text border-t-transparent rounded-full animate-spin" />
                 <span className="text-sm text-primary">Processing...</span>
@@ -1113,10 +1064,9 @@ See you there!`);
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: 400, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
-              transition={{ duration: 0.3 }}
-              className="glass-panel border-l silver-border flex flex-col h-full"
+              className="glass-panel border-l silver-border flex flex-col"
             >
-              <div className="p-4 border-b silver-border flex-shrink-0">
+              <div className="p-4 border-b silver-border">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-primary">Live Transcript</h3>
                   <div className="flex space-x-2">
@@ -1133,7 +1083,7 @@ See you there!`);
                       variant="ghost"
                       size="sm"
                     >
-                      <X className="w-4 h-4" />
+                      ×
                     </Button>
                   </div>
                 </div>
@@ -1170,10 +1120,9 @@ See you there!`);
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: 400, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
-              transition={{ duration: 0.3 }}
-              className="glass-panel border-l silver-border flex flex-col h-full"
+              className="glass-panel border-l silver-border flex flex-col"
             >
-              <div className="p-4 border-b silver-border flex-shrink-0">
+              <div className="p-4 border-b silver-border">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-primary">AI Notes</h3>
                   <div className="flex space-x-2">
@@ -1198,7 +1147,7 @@ See you there!`);
                       variant="ghost"
                       size="sm"
                     >
-                      <X className="w-4 h-4" />
+                      ×
                     </Button>
                   </div>
                 </div>
@@ -1246,7 +1195,7 @@ See you there!`);
       </div>
 
       {/* Controls - Fixed at bottom */}
-      <div className="glass-panel border-t silver-border p-4 flex-shrink-0 z-50">
+      <div className="glass-panel border-t silver-border p-4 flex-shrink-0">
         <div className="flex justify-center items-center space-x-4">
           <button
             onClick={toggleAudio}
