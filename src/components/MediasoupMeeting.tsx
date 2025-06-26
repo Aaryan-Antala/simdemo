@@ -36,8 +36,8 @@ interface Note {
 interface Peer {
   id: string;
   displayName: string;
-  videoStream?: MediaStream;
-  audioStream?: MediaStream;
+  videoElement?: HTMLVideoElement;
+  audioElement?: HTMLAudioElement;
   hasVideo: boolean;
   hasAudio: boolean;
 }
@@ -49,6 +49,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const recvTransportRef = useRef<any>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const recognitionRef = useRef<any>(null);
+  const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   
   const [isConnected, setIsConnected] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
@@ -93,15 +95,26 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   useEffect(() => {
     if (localStream && localVideoRef.current) {
       console.log('Attaching local stream to video element');
-      localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.muted = true;
-      localVideoRef.current.autoplay = true;
-      localVideoRef.current.playsInline = true;
+      const videoElement = localVideoRef.current;
       
-      // Force play
-      localVideoRef.current.play().catch(error => {
-        console.error('Error playing local video:', error);
-      });
+      // Stop any existing stream
+      if (videoElement.srcObject) {
+        const existingStream = videoElement.srcObject as MediaStream;
+        existingStream.getTracks().forEach(track => track.stop());
+      }
+      
+      videoElement.srcObject = localStream;
+      videoElement.muted = true;
+      videoElement.autoplay = true;
+      videoElement.playsInline = true;
+      
+      // Force play with error handling
+      const playPromise = videoElement.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          console.error('Error playing local video:', error);
+        });
+      }
     }
   }, [localStream]);
 
@@ -156,6 +169,9 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
       }
+      // Clean up video and audio elements
+      videoElementsRef.current.clear();
+      audioElementsRef.current.clear();
     };
   }, [roomName, displayName]);
 
@@ -451,10 +467,10 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       // Resume the consumer immediately
       socketRef.current.emit('resumeConsumer', { consumerId: id });
 
-      // Create stream and update peer state
+      // Create stream and attach to element
       const stream = new MediaStream([consumer.track]);
       
-      // Update peer with stream info
+      // Update peer with stream info and attach to elements
       setPeers(prev => {
         const newPeers = new Map(prev);
         const existingPeer = newPeers.get(peerId);
@@ -464,18 +480,48 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
           displayName: existingPeer?.displayName || `User ${peerId.slice(0, 8)}`,
           hasVideo: existingPeer?.hasVideo || false,
           hasAudio: existingPeer?.hasAudio || false,
-          videoStream: existingPeer?.videoStream,
-          audioStream: existingPeer?.audioStream
+          videoElement: existingPeer?.videoElement,
+          audioElement: existingPeer?.audioElement
         };
 
         if (kind === 'video') {
-          peer.videoStream = stream;
           peer.hasVideo = true;
           console.log(`Updated peer ${peerId} with video stream`);
+          
+          // Attach video stream to element if it exists
+          const videoElement = videoElementsRef.current.get(peerId);
+          if (videoElement) {
+            console.log(`Attaching video stream to element for peer ${peerId}`);
+            videoElement.srcObject = stream;
+            videoElement.autoplay = true;
+            videoElement.playsInline = true;
+            
+            const playPromise = videoElement.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(error => {
+                console.error(`Error playing video for peer ${peerId}:`, error);
+              });
+            }
+          }
         } else if (kind === 'audio') {
-          peer.audioStream = stream;
           peer.hasAudio = true;
           console.log(`Updated peer ${peerId} with audio stream`);
+          
+          // Attach audio stream to element if it exists
+          const audioElement = audioElementsRef.current.get(peerId);
+          if (audioElement) {
+            console.log(`Attaching audio stream to element for peer ${peerId}`);
+            audioElement.srcObject = stream;
+            audioElement.autoplay = true;
+            audioElement.playsInline = true;
+            
+            const playPromise = audioElement.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(error => {
+                console.error(`Error playing audio for peer ${peerId}:`, error);
+              });
+            }
+          }
         }
 
         newPeers.set(peerId, peer);
@@ -549,8 +595,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         displayName: peerDisplayName,
         hasVideo: existingPeer?.hasVideo || false,
         hasAudio: existingPeer?.hasAudio || false,
-        videoStream: existingPeer?.videoStream,
-        audioStream: existingPeer?.audioStream
+        videoElement: existingPeer?.videoElement,
+        audioElement: existingPeer?.audioElement
       });
       
       return newPeers;
@@ -564,6 +610,10 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       newPeers.delete(peerId);
       return newPeers;
     });
+    
+    // Clean up video and audio elements
+    videoElementsRef.current.delete(peerId);
+    audioElementsRef.current.delete(peerId);
   };
 
   const handleExistingPeers = (existingPeers: any[]) => {
@@ -785,39 +835,70 @@ See you there!`);
   };
 
   // Video element ref callback for remote peers
-  const setVideoRef = useCallback((peer: Peer) => (el: HTMLVideoElement | null) => {
-    if (el && peer.videoStream) {
-      console.log(`Setting video stream for peer ${peer.id}`);
-      el.srcObject = peer.videoStream;
-      el.autoplay = true;
-      el.playsInline = true;
-      el.play().catch(console.error);
+  const setVideoRef = useCallback((peerId: string) => (el: HTMLVideoElement | null) => {
+    if (el) {
+      console.log(`Setting video element ref for peer ${peerId}`);
+      videoElementsRef.current.set(peerId, el);
+      
+      // If we already have a peer with video stream, attach it immediately
+      const peer = peers.get(peerId);
+      if (peer && peer.hasVideo) {
+        // Find the consumer for this peer's video
+        const videoConsumer = Array.from(consumers.values()).find(consumer => 
+          consumer.kind === 'video' && consumer.appData?.peerId === peerId
+        );
+        
+        if (videoConsumer) {
+          const stream = new MediaStream([videoConsumer.track]);
+          el.srcObject = stream;
+          el.autoplay = true;
+          el.playsInline = true;
+          
+          const playPromise = el.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(error => {
+              console.error(`Error playing video for peer ${peerId}:`, error);
+            });
+          }
+        }
+      }
+    } else {
+      videoElementsRef.current.delete(peerId);
     }
-  }, []);
+  }, [peers, consumers]);
 
   // Audio element ref callback for remote peers
-  const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
-    if (el && peer.audioStream) {
-      console.log(`Setting audio stream for peer ${peer.id}`);
-      el.srcObject = peer.audioStream;
-      el.autoplay = true;
-      el.playsInline = true;
-      el.play().catch(console.error);
+  const setAudioRef = useCallback((peerId: string) => (el: HTMLAudioElement | null) => {
+    if (el) {
+      console.log(`Setting audio element ref for peer ${peerId}`);
+      audioElementsRef.current.set(peerId, el);
+      
+      // If we already have a peer with audio stream, attach it immediately
+      const peer = peers.get(peerId);
+      if (peer && peer.hasAudio) {
+        // Find the consumer for this peer's audio
+        const audioConsumer = Array.from(consumers.values()).find(consumer => 
+          consumer.kind === 'audio' && consumer.appData?.peerId === peerId
+        );
+        
+        if (audioConsumer) {
+          const stream = new MediaStream([audioConsumer.track]);
+          el.srcObject = stream;
+          el.autoplay = true;
+          el.playsInline = true;
+          
+          const playPromise = el.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(error => {
+              console.error(`Error playing audio for peer ${peerId}:`, error);
+            });
+          }
+        }
+      }
+    } else {
+      audioElementsRef.current.delete(peerId);
     }
-  }, []);
-
-  // Local video ref callback
-  const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
-    localVideoRef.current = el;
-    if (el && localStream) {
-      console.log('Setting local video stream');
-      el.srcObject = localStream;
-      el.muted = true;
-      el.autoplay = true;
-      el.playsInline = true;
-      el.play().catch(console.error);
-    }
-  }, [localStream]);
+  }, [peers, consumers]);
 
   if (!isConnected) {
     return (
@@ -933,7 +1014,7 @@ See you there!`);
               transition={{ duration: 0.3 }}
             >
               <video
-                ref={setLocalVideoRef}
+                ref={localVideoRef}
                 autoPlay
                 muted
                 playsInline
@@ -984,21 +1065,26 @@ See you there!`);
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.3, delay: index * 0.1 }}
               >
-                {peer.hasVideo && peer.videoStream && (
-                  <video
-                    ref={setVideoRef(peer)}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
-                )}
-                {peer.hasAudio && peer.audioStream && (
-                  <audio
-                    ref={setAudioRef(peer)}
-                    autoPlay
-                    playsInline
-                  />
-                )}
+                {/* Video Element */}
+                <video
+                  ref={setVideoRef(peer.id)}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover"
+                  style={{
+                    display: peer.hasVideo ? 'block' : 'none'
+                  }}
+                />
+                
+                {/* Audio Element (hidden) */}
+                <audio
+                  ref={setAudioRef(peer.id)}
+                  autoPlay
+                  playsInline
+                  style={{ display: 'none' }}
+                />
+                
+                {/* Fallback when no video */}
                 {!peer.hasVideo && (
                   <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
                     <div className="text-center">
@@ -1011,6 +1097,7 @@ See you there!`);
                     </div>
                   </div>
                 )}
+                
                 <div className="absolute bottom-2 left-2 glass-panel px-3 py-1 rounded-full text-sm">
                   <span className="text-primary font-medium">{peer.displayName}</span>
                 </div>
