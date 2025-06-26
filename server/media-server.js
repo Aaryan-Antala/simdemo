@@ -3,23 +3,18 @@ const http = require('http');
 const socketIo = require('socket.io');
 const mediasoup = require('mediasoup');
 const cors = require('cors');
-VITE_APP_URL=process.env.VITE_APP_URL
-VITE_API_URL=process.env.VITE_API_URL
-VITE_AI_API_URL=process.env.VITE_AI_API_URL
-VITE_MEDIA_API_URL=process.env.VITE_MEDIA_API_URL
-VITE_WORKSPACE_API_URL=process.env.VITE_WORKSPACE_API_URL
-FRONTEND_URL=process.env.FRONTEND_URL
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: `${FRONTEND_URL}`,
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
     methods: ["GET", "POST"]
   }
 });
 
 app.use(cors({
-  origin: `${FRONTEND_URL}`,
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
   credentials: true
 }));
 app.use(express.json());
@@ -42,43 +37,11 @@ const mediaCodecs = [
       'x-google-start-bitrate': 1000,
     },
   },
-  {
-    kind: 'video',
-    mimeType: 'video/VP9',
-    clockRate: 90000,
-    parameters: {
-      'profile-id': 2,
-      'x-google-start-bitrate': 1000,
-    },
-  },
-  {
-    kind: 'video',
-    mimeType: 'video/h264',
-    clockRate: 90000,
-    parameters: {
-      'packetization-mode': 1,
-      'profile-level-id': '4d0032',
-      'level-asymmetry-allowed': 1,
-      'x-google-start-bitrate': 1000,
-    },
-  },
-  {
-    kind: 'video',
-    mimeType: 'video/H264',
-    clockRate: 90000,
-    parameters: {
-      'packetization-mode': 1,
-      'profile-level-id': '42e01f',
-      'level-asymmetry-allowed': 1,
-      'x-google-start-bitrate': 1000,
-    },
-  },
 ];
 
 // Global variables
 let worker;
 const rooms = new Map();
-const peers = new Map();
 
 // Initialize mediasoup worker
 async function createWorker() {
@@ -97,12 +60,12 @@ async function createWorker() {
   return worker;
 }
 
-// Room management
+// Room class
 class Room {
   constructor(roomId) {
     this.id = roomId;
-    this.peers = new Map();
     this.router = null;
+    this.peers = new Map(); // socketId -> peer object
     this.createdAt = new Date();
   }
 
@@ -111,37 +74,35 @@ class Room {
     console.log(`Room ${this.id} initialized with router`);
   }
 
-  addPeer(peerId, socket) {
+  addPeer(socketId, socket) {
     const peer = {
-      id: peerId,
+      id: socketId,
       socket: socket,
-      transports: new Map(),
-      producers: new Map(),
-      consumers: new Map(),
       displayName: '',
+      transports: new Map(), // transportId -> transport
+      producers: new Map(), // producerId -> producer
+      consumers: new Map(), // consumerId -> consumer
       joined: false
     };
     
-    this.peers.set(peerId, peer);
-    peers.set(peerId, peer);
-    console.log(`Peer ${peerId} added to room ${this.id}`);
+    this.peers.set(socketId, peer);
+    console.log(`Peer ${socketId} added to room ${this.id}`);
     return peer;
   }
 
-  removePeer(peerId) {
-    const peer = this.peers.get(peerId);
+  removePeer(socketId) {
+    const peer = this.peers.get(socketId);
     if (peer) {
       // Close all transports
       peer.transports.forEach(transport => transport.close());
       
       // Remove peer
-      this.peers.delete(peerId);
-      peers.delete(peerId);
+      this.peers.delete(socketId);
       
-      console.log(`Peer ${peerId} removed from room ${this.id}`);
+      console.log(`Peer ${socketId} removed from room ${this.id}`);
       
       // Notify other peers
-      this.broadcast('peerLeft', { peerId }, peerId);
+      this.broadcast('peerLeft', { peerId: socketId }, socketId);
       
       // Clean up room if empty
       if (this.peers.size === 0) {
@@ -173,33 +134,20 @@ class Room {
     return peersInfo;
   }
 
-  // Get all producers in the room
-  getAllProducers() {
+  getProducers(excludePeerId = null) {
     const producers = [];
     this.peers.forEach((peer, peerId) => {
-      peer.producers.forEach((producer, producerId) => {
-        producers.push({
-          peerId: peerId,
-          producerId: producerId,
-          kind: producer.kind
-        });
-      });
-    });
-    return producers;
-  }
-
-  // Notify all peers about a new producer
-  notifyNewProducer(producerPeerId, producerId, kind) {
-    this.peers.forEach((peer, peerId) => {
-      if (peerId !== producerPeerId && peer.joined) {
-        console.log(`Notifying peer ${peerId} about new producer ${producerId} from ${producerPeerId}`);
-        peer.socket.emit('newProducer', {
-          peerId: producerPeerId,
-          producerId: producerId,
-          kind: kind
+      if (peerId !== excludePeerId) {
+        peer.producers.forEach((producer, producerId) => {
+          producers.push({
+            peerId: peerId,
+            producerId: producerId,
+            kind: producer.kind
+          });
         });
       }
     });
+    return producers;
   }
 }
 
@@ -240,7 +188,7 @@ io.on('connection', (socket) => {
     try {
       const { direction } = data;
       const room = rooms.get(socket.roomId);
-      const peer = peers.get(socket.id);
+      const peer = room?.peers.get(socket.id);
 
       if (!room || !peer) {
         throw new Error('Room or peer not found');
@@ -286,7 +234,8 @@ io.on('connection', (socket) => {
   socket.on('connectTransport', async (data) => {
     try {
       const { transportId, dtlsParameters } = data;
-      const peer = peers.get(socket.id);
+      const room = rooms.get(socket.roomId);
+      const peer = room?.peers.get(socket.id);
 
       if (!peer) {
         throw new Error('Peer not found');
@@ -311,7 +260,7 @@ io.on('connection', (socket) => {
     try {
       const { transportId, kind, rtpParameters } = data;
       const room = rooms.get(socket.roomId);
-      const peer = peers.get(socket.id);
+      const peer = room?.peers.get(socket.id);
 
       if (!room || !peer) {
         throw new Error('Room or peer not found');
@@ -345,19 +294,20 @@ io.on('connection', (socket) => {
         // Send existing peers to new peer
         const existingPeers = room.getPeersInfo().filter(p => p.id !== socket.id);
         socket.emit('existingPeers', existingPeers);
-        console.log(`Sent existing peers to ${socket.id}:`, existingPeers);
 
         // Send existing producers to new peer
-        const existingProducers = room.getAllProducers().filter(p => p.peerId !== socket.id);
-        console.log(`[SERVER] existingProducers for ${socket.id}:`, existingProducers);
+        const existingProducers = room.getProducers(socket.id);
         if (existingProducers.length > 0) {
           socket.emit('existingProducers', existingProducers);
         }
       }
 
       // Notify other peers about new producer
-      console.log(`Broadcasting new producer ${producer.id} (${kind}) from ${socket.id}`);
-      room.notifyNewProducer(socket.id, producer.id, producer.kind);
+      room.broadcast('newProducer', {
+        peerId: socket.id,
+        producerId: producer.id,
+        kind: producer.kind
+      }, socket.id);
 
       socket.emit('produced', { id: producer.id });
 
@@ -371,7 +321,7 @@ io.on('connection', (socket) => {
     try {
       const { transportId, producerId, rtpCapabilities } = data;
       const room = rooms.get(socket.roomId);
-      const peer = peers.get(socket.id);
+      const peer = room?.peers.get(socket.id);
 
       if (!room || !peer) {
         throw new Error('Room or peer not found');
@@ -388,7 +338,13 @@ io.on('connection', (socket) => {
         return;
       }
 
-      console.log(`[SERVER] consume request: peer=${socket.id} producerId=${producerId}`);
+      // Find the peer who owns this producer
+      let producerPeerId = null;
+      room.peers.forEach((p, pid) => {
+        if (p.producers.has(producerId)) {
+          producerPeerId = pid;
+        }
+      });
 
       const consumer = await transport.consume({
         producerId,
@@ -409,16 +365,6 @@ io.on('connection', (socket) => {
         socket.emit('consumerClosed', { consumerId: consumer.id });
       });
 
-      // Find the peer who owns this producer
-      let producerPeerId = null;
-      room.peers.forEach((p, pid) => {
-        if (p.producers.has(producerId)) {
-          producerPeerId = pid;
-        }
-      });
-
-      console.log(`[SERVER] sending consumed: consumerId=${consumer.id} producerId=${producerId} kind=${consumer.kind} to peer=${socket.id} from producer peer=${producerPeerId}`);
-
       socket.emit('consumed', {
         id: consumer.id,
         producerId: producerId,
@@ -427,7 +373,7 @@ io.on('connection', (socket) => {
         peerId: producerPeerId
       });
 
-      console.log(`Consumer ${consumer.id} created for peer ${socket.id}`);
+      console.log(`Consumer ${consumer.id} created for peer ${socket.id} from producer ${producerId} (peer ${producerPeerId})`);
 
     } catch (error) {
       console.error('Error consuming:', error);
@@ -438,7 +384,8 @@ io.on('connection', (socket) => {
   socket.on('resumeConsumer', async (data) => {
     try {
       const { consumerId } = data;
-      const peer = peers.get(socket.id);
+      const room = rooms.get(socket.roomId);
+      const peer = room?.peers.get(socket.id);
 
       if (!peer) {
         throw new Error('Peer not found');
@@ -466,7 +413,7 @@ io.on('connection', (socket) => {
         throw new Error('Room not found');
       }
 
-      const producers = room.getAllProducers().filter(p => p.peerId !== socket.id);
+      const producers = room.getProducers(socket.id);
       console.log(`Sending producers to ${socket.id}:`, producers);
       socket.emit('producers', producers);
 
@@ -491,7 +438,7 @@ app.get('/api/media/health', (req, res) => {
   res.json({
     status: 'healthy',
     rooms: rooms.size,
-    peers: peers.size,
+    peers: Array.from(rooms.values()).reduce((total, room) => total + room.peers.size, 0),
     worker: worker ? 'running' : 'not initialized'
   });
 });
