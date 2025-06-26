@@ -26,7 +26,7 @@ app.use(express.json());
 
 const PORT = process.env.MEDIA_PORT || 3001;
 
-// Mediasoup configuration
+// Mediasoup configuration with proper network settings
 const mediaCodecs = [
   {
     kind: 'audio',
@@ -80,17 +80,26 @@ let worker;
 const rooms = new Map();
 const peers = new Map();
 
-// Initialize mediasoup worker
+// Initialize mediasoup worker with proper settings
 async function createWorker() {
   worker = await mediasoup.createWorker({
     rtcMinPort: 10000,
     rtcMaxPort: 10100,
+    logLevel: 'warn',
+    logTags: [
+      'info',
+      'ice',
+      'dtls',
+      'rtp',
+      'srtp',
+      'rtcp',
+    ],
   });
 
-  console.log(`Mediasoup worker pid: ${worker.pid}`);
+  console.log(`[WORKER] Mediasoup worker pid: ${worker.pid}`);
 
   worker.on('died', (error) => {
-    console.error('Mediasoup worker has died:', error);
+    console.error('[WORKER] Mediasoup worker has died:', error);
     setTimeout(() => process.exit(1), 2000);
   });
 
@@ -108,7 +117,7 @@ class Room {
 
   async initialize() {
     this.router = await worker.createRouter({ mediaCodecs });
-    console.log(`Room ${this.id} initialized with router`);
+    console.log(`[ROOM] Room ${this.id} initialized with router`);
   }
 
   addPeer(peerId, socket) {
@@ -124,7 +133,7 @@ class Room {
     
     this.peers.set(peerId, peer);
     peers.set(peerId, peer);
-    console.log(`Peer ${peerId} added to room ${this.id}`);
+    console.log(`[ROOM] Peer ${peerId} added to room ${this.id}`);
     return peer;
   }
 
@@ -132,22 +141,26 @@ class Room {
     const peer = this.peers.get(peerId);
     if (peer) {
       // Close all transports
-      peer.transports.forEach(transport => transport.close());
+      peer.transports.forEach(transport => {
+        console.log(`[ROOM] Closing transport ${transport.id} for peer ${peerId}`);
+        transport.close();
+      });
       
       // Remove peer
       this.peers.delete(peerId);
       peers.delete(peerId);
       
-      console.log(`Peer ${peerId} removed from room ${this.id}`);
+      console.log(`[ROOM] Peer ${peerId} removed from room ${this.id}`);
       
       // Notify other peers
       this.broadcast('peerLeft', { peerId }, peerId);
       
       // Clean up room if empty
       if (this.peers.size === 0) {
+        console.log(`[ROOM] Closing router for empty room ${this.id}`);
         this.router.close();
         rooms.delete(this.id);
-        console.log(`Room ${this.id} closed - no peers remaining`);
+        console.log(`[ROOM] Room ${this.id} closed - no peers remaining`);
       }
     }
   }
@@ -206,12 +219,12 @@ class Room {
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.id}`);
+  console.log(`[SOCKET] Socket connected: ${socket.id}`);
 
   socket.on('join-room', async (data) => {
     try {
       const { roomId, displayName } = data;
-      console.log(`${socket.id} joining room ${roomId} as ${displayName}`);
+      console.log(`[SOCKET] ${socket.id} joining room ${roomId} as ${displayName}`);
 
       // Get or create room
       let room = rooms.get(roomId);
@@ -232,7 +245,7 @@ io.on('connection', (socket) => {
       socket.emit('routerRtpCapabilities', room.router.rtpCapabilities);
 
     } catch (error) {
-      console.error('Error joining room:', error);
+      console.error('[SOCKET] Error joining room:', error);
       socket.emit('error', { message: 'Failed to join room' });
     }
   });
@@ -247,28 +260,44 @@ io.on('connection', (socket) => {
         throw new Error('Room or peer not found');
       }
 
-      console.log(`Creating ${direction} transport for peer ${socket.id}`);
+      console.log(`[TRANSPORT] Creating ${direction} transport for peer ${socket.id}`);
 
+      // Enhanced transport configuration for better connectivity
       const transport = await room.router.createWebRtcTransport({
         listenIps: [
           {
             ip: '0.0.0.0',
-            announcedIp: '127.0.0.1',
+            announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
           },
         ],
         enableUdp: true,
         enableTcp: true,
         preferUdp: true,
+        initialAvailableOutgoingBitrate: 1000000,
+        minimumAvailableOutgoingBitrate: 600000,
+        maxSctpMessageSize: 262144,
+        // Additional DTLS settings for better connectivity
+        enableSctp: true,
+        numSctpStreams: { OS: 1024, MIS: 1024 },
+        maxIncomingBitrate: 1500000,
       });
 
       peer.transports.set(transport.id, transport);
 
       transport.on('dtlsstatechange', (dtlsState) => {
-        console.log(`Transport ${transport.id} dtlsState: ${dtlsState}`);
+        console.log(`[TRANSPORT] Transport ${transport.id} dtlsState: ${dtlsState}`);
         if (dtlsState === 'closed') {
           transport.close();
           peer.transports.delete(transport.id);
         }
+      });
+
+      transport.on('icestatechange', (iceState) => {
+        console.log(`[TRANSPORT] Transport ${transport.id} iceState: ${iceState}`);
+      });
+
+      transport.on('iceselectedtuplechange', (iceSelectedTuple) => {
+        console.log(`[TRANSPORT] Transport ${transport.id} iceSelectedTuple:`, iceSelectedTuple);
       });
 
       socket.emit('webRtcTransportCreated', {
@@ -280,7 +309,7 @@ io.on('connection', (socket) => {
       });
 
     } catch (error) {
-      console.error('Error creating WebRTC transport:', error);
+      console.error('[TRANSPORT] Error creating WebRTC transport:', error);
       socket.emit('error', { message: 'Failed to create transport' });
     }
   });
@@ -299,12 +328,13 @@ io.on('connection', (socket) => {
         throw new Error('Transport not found');
       }
 
+      console.log(`[TRANSPORT] Connecting transport ${transportId} for peer ${socket.id}`);
       await transport.connect({ dtlsParameters });
-      console.log(`Transport ${transportId} connected for peer ${socket.id}`);
+      console.log(`[TRANSPORT] Transport ${transportId} connected for peer ${socket.id}`);
       socket.emit('transportConnected', { transportId });
 
     } catch (error) {
-      console.error('Error connecting transport:', error);
+      console.error('[TRANSPORT] Error connecting transport:', error);
       socket.emit('error', { message: 'Failed to connect transport' });
     }
   });
@@ -329,7 +359,7 @@ io.on('connection', (socket) => {
       peer.producers.set(producer.id, producer);
 
       producer.on('transportclose', () => {
-        console.log(`Producer ${producer.id} transport closed`);
+        console.log(`[PRODUCE] Producer ${producer.id} transport closed`);
         producer.close();
         peer.producers.delete(producer.id);
       });
@@ -367,7 +397,7 @@ io.on('connection', (socket) => {
       socket.emit('produced', { id: producer.id });
 
     } catch (error) {
-      console.error('Error producing:', error);
+      console.error('[PRODUCE] Error producing:', error);
       socket.emit('error', { message: 'Failed to produce' });
     }
   });
@@ -421,13 +451,13 @@ io.on('connection', (socket) => {
       peer.consumers.set(consumer.id, consumer);
 
       consumer.on('transportclose', () => {
-        console.log(`Consumer ${consumer.id} transport closed`);
+        console.log(`[CONSUME] Consumer ${consumer.id} transport closed`);
         consumer.close();
         peer.consumers.delete(consumer.id);
       });
 
       consumer.on('producerclose', () => {
-        console.log(`Consumer ${consumer.id} producer closed`);
+        console.log(`[CONSUME] Consumer ${consumer.id} producer closed`);
         consumer.close();
         peer.consumers.delete(consumer.id);
         socket.emit('consumerClosed', { consumerId: consumer.id });
@@ -444,7 +474,7 @@ io.on('connection', (socket) => {
       });
 
     } catch (error) {
-      console.error('Error consuming:', error);
+      console.error('[CONSUME] Error consuming:', error);
       socket.emit('error', { message: 'Failed to consume' });
     }
   });
@@ -464,11 +494,11 @@ io.on('connection', (socket) => {
       }
 
       await consumer.resume();
-      console.log(`Consumer ${consumerId} resumed for peer ${socket.id}`);
+      console.log(`[CONSUME] Consumer ${consumerId} resumed for peer ${socket.id}`);
       socket.emit('consumerResumed', { consumerId });
 
     } catch (error) {
-      console.error('Error resuming consumer:', error);
+      console.error('[CONSUME] Error resuming consumer:', error);
       socket.emit('error', { message: 'Failed to resume consumer' });
     }
   });
@@ -481,17 +511,17 @@ io.on('connection', (socket) => {
       }
 
       const producers = room.getAllProducers().filter(p => p.peerId !== socket.id);
-      console.log(`Sending producers to ${socket.id}:`, producers);
+      console.log(`[SOCKET] Sending producers to ${socket.id}:`, producers);
       socket.emit('producers', producers);
 
     } catch (error) {
-      console.error('Error getting producers:', error);
+      console.error('[SOCKET] Error getting producers:', error);
       socket.emit('error', { message: 'Failed to get producers' });
     }
   });
 
   socket.on('disconnect', () => {
-    console.log(`Socket disconnected: ${socket.id}`);
+    console.log(`[SOCKET] Socket disconnected: ${socket.id}`);
     
     const room = rooms.get(socket.roomId);
     if (room) {
@@ -528,11 +558,13 @@ async function startServer() {
     await createWorker();
     
     server.listen(PORT, () => {
-      console.log(`Mediasoup server running on http://localhost:${PORT}`);
-      console.log(`Health check: http://localhost:${PORT}/api/media/health`);
+      console.log(`[SERVER] Mediasoup server running on http://localhost:${PORT}`);
+      console.log(`[SERVER] Health check: http://localhost:${PORT}/api/media/health`);
+      console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`[SERVER] Announced IP: ${process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1'}`);
     });
   } catch (error) {
-    console.error('Failed to start mediasoup server:', error);
+    console.error('[SERVER] Failed to start mediasoup server:', error);
     process.exit(1);
   }
 }
