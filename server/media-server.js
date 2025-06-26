@@ -173,7 +173,7 @@ class Room {
     return peersInfo;
   }
 
-  // NEW: Get all producers in the room
+  // Get all producers in the room
   getAllProducers() {
     const producers = [];
     this.peers.forEach((peer, peerId) => {
@@ -188,7 +188,7 @@ class Room {
     return producers;
   }
 
-  // NEW: Notify all peers about a new producer
+  // Notify all peers about a new producer
   notifyNewProducer(producerPeerId, producerId, kind) {
     this.peers.forEach((peer, peerId) => {
       if (peerId !== producerPeerId && peer.joined) {
@@ -349,7 +349,6 @@ io.on('connection', (socket) => {
 
         // Send existing producers to new peer
         const existingProducers = room.getAllProducers().filter(p => p.peerId !== socket.id);
-        // --- ADD DEBUG LOG ---
         console.log(`[SERVER] existingProducers for ${socket.id}:`, existingProducers);
         if (existingProducers.length > 0) {
           socket.emit('existingProducers', existingProducers);
@@ -389,7 +388,6 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // --- ADD DEBUG LOG ---
       console.log(`[SERVER] consume request: peer=${socket.id} producerId=${producerId}`);
 
       const consumer = await transport.consume({
@@ -411,18 +409,22 @@ io.on('connection', (socket) => {
         socket.emit('consumerClosed', { consumerId: consumer.id });
       });
 
-      // --- ADD DEBUG LOG ---
-      console.log(`[SERVER] sending consumed: consumerId=${consumer.id} producerId=${producerId} kind=${consumer.kind} to peer=${socket.id}`);
+      // Find the peer who owns this producer
+      let producerPeerId = null;
+      room.peers.forEach((p, pid) => {
+        if (p.producers.has(producerId)) {
+          producerPeerId = pid;
+        }
+      });
+
+      console.log(`[SERVER] sending consumed: consumerId=${consumer.id} producerId=${producerId} kind=${consumer.kind} to peer=${socket.id} from producer peer=${producerPeerId}`);
 
       socket.emit('consumed', {
         id: consumer.id,
         producerId: producerId,
         kind: consumer.kind,
         rtpParameters: consumer.rtpParameters,
-        // ADD peerId for mapping on client
-        peerId: Array.from(room.peers.entries()).find(([pid, p]) =>
-          p.producers.has(producerId)
-        )?.[0] || null
+        peerId: producerPeerId
       });
 
       console.log(`Consumer ${consumer.id} created for peer ${socket.id}`);
