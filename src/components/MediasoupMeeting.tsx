@@ -5,6 +5,7 @@ import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText
 import { motion, AnimatePresence } from 'framer-motion';
 import GlassCard from './ui/GlassCard';
 import Button from './ui/Button';
+
 const VITE_AI_API_URL = import.meta.env.VITE_AI_API_URL;
 const VITE_API_URL = import.meta.env.VITE_API_URL;
 const VITE_MEDIA_API_URL = import.meta.env.VITE_MEDIA_API_URL;
@@ -35,8 +36,6 @@ interface Note {
 interface Peer {
   id: string;
   displayName: string;
-  videoElement?: HTMLVideoElement;
-  audioElement?: HTMLAudioElement;
   videoStream?: MediaStream;
   audioStream?: MediaStream;
   hasVideo: boolean;
@@ -50,8 +49,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const recvTransportRef = useRef<any>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const recognitionRef = useRef<any>(null);
-  const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
-  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   
   const [isConnected, setIsConnected] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
@@ -75,17 +72,17 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   // Calculate grid layout based on participant count
   const getGridLayout = useCallback((participantCount: number) => {
     if (participantCount === 1) {
-      return { cols: 1, rows: 1, aspectRatio: '16/9' };
+      return { cols: 1, rows: 1, className: 'grid-cols-1' };
     } else if (participantCount === 2) {
-      return { cols: 2, rows: 1, aspectRatio: '16/9' };
+      return { cols: 2, rows: 1, className: 'grid-cols-2' };
     } else if (participantCount <= 4) {
-      return { cols: 2, rows: 2, aspectRatio: '16/9' };
+      return { cols: 2, rows: 2, className: 'grid-cols-2' };
     } else if (participantCount <= 6) {
-      return { cols: 3, rows: 2, aspectRatio: '16/9' };
+      return { cols: 3, rows: 2, className: 'grid-cols-3' };
     } else if (participantCount <= 9) {
-      return { cols: 3, rows: 3, aspectRatio: '16/9' };
+      return { cols: 3, rows: 3, className: 'grid-cols-3' };
     } else {
-      return { cols: 4, rows: Math.ceil(participantCount / 4), aspectRatio: '16/9' };
+      return { cols: 4, rows: Math.ceil(participantCount / 4), className: 'grid-cols-4' };
     }
   }, []);
 
@@ -420,7 +417,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
   const handleConsumed = async (data: any) => {
     const { id, producerId, kind, rtpParameters, peerId } = data;
-    console.log('Consuming:', data);
+    console.log('Consuming:', { id, producerId, kind, peerId });
 
     try {
       if (!recvTransportRef.current) {
@@ -438,52 +435,39 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       console.log('Consumer created:', consumer.id, 'for peer:', peerId);
       setConsumers(prev => new Map(prev.set(id, consumer)));
 
-      // Resume the consumer
+      // Resume the consumer immediately
       socketRef.current.emit('resumeConsumer', { consumerId: id });
 
-      // Create stream and attach to peer
+      // Create stream and update peer state
       const stream = new MediaStream([consumer.track]);
       
       // Update peer with stream info
       setPeers(prev => {
         const newPeers = new Map(prev);
-        const peer = newPeers.get(peerId) || {
+        const existingPeer = newPeers.get(peerId);
+        
+        const peer: Peer = {
           id: peerId,
-          displayName: `User ${peerId.slice(0, 8)}`,
-          hasVideo: false,
-          hasAudio: false
+          displayName: existingPeer?.displayName || `User ${peerId.slice(0, 8)}`,
+          hasVideo: existingPeer?.hasVideo || false,
+          hasAudio: existingPeer?.hasAudio || false,
+          videoStream: existingPeer?.videoStream,
+          audioStream: existingPeer?.audioStream
         };
 
         if (kind === 'video') {
           peer.videoStream = stream;
           peer.hasVideo = true;
+          console.log(`Updated peer ${peerId} with video stream`);
         } else if (kind === 'audio') {
           peer.audioStream = stream;
           peer.hasAudio = true;
+          console.log(`Updated peer ${peerId} with audio stream`);
         }
 
         newPeers.set(peerId, peer);
         return newPeers;
       });
-
-      // Attach stream to video/audio elements
-      setTimeout(() => {
-        if (kind === 'video') {
-          const videoEl = videoElementsRef.current.get(peerId);
-          if (videoEl) {
-            console.log(`Setting video stream for peer ${peerId}`);
-            videoEl.srcObject = stream;
-            videoEl.play().catch(console.error);
-          }
-        } else if (kind === 'audio') {
-          const audioEl = audioElementsRef.current.get(peerId);
-          if (audioEl) {
-            console.log(`Setting audio stream for peer ${peerId}`);
-            audioEl.srcObject = stream;
-            audioEl.play().catch(console.error);
-          }
-        }
-      }, 100);
 
       consumer.on('transportclose', () => {
         console.log('Consumer transport closed');
@@ -543,12 +527,21 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
   const handlePeerJoined = ({ peerId, displayName: peerDisplayName }: any) => {
     console.log(`Peer joined: ${peerId} (${peerDisplayName})`);
-    setPeers(prev => new Map(prev.set(peerId, { 
-      id: peerId, 
-      displayName: peerDisplayName,
-      hasVideo: false,
-      hasAudio: false
-    })));
+    setPeers(prev => {
+      const newPeers = new Map(prev);
+      const existingPeer = newPeers.get(peerId);
+      
+      newPeers.set(peerId, {
+        id: peerId,
+        displayName: peerDisplayName,
+        hasVideo: existingPeer?.hasVideo || false,
+        hasAudio: existingPeer?.hasAudio || false,
+        videoStream: existingPeer?.videoStream,
+        audioStream: existingPeer?.audioStream
+      });
+      
+      return newPeers;
+    });
   };
 
   const handlePeerLeft = ({ peerId }: any) => {
@@ -558,10 +551,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       newPeers.delete(peerId);
       return newPeers;
     });
-    
-    // Clean up video/audio elements
-    videoElementsRef.current.delete(peerId);
-    audioElementsRef.current.delete(peerId);
   };
 
   const handleExistingPeers = (existingPeers: any[]) => {
@@ -782,35 +771,23 @@ See you there!`);
     onLeave();
   };
 
-  // Video element ref callback
-  const setVideoRef = useCallback((peerId: string) => (el: HTMLVideoElement | null) => {
-    if (el) {
-      videoElementsRef.current.set(peerId, el);
-      // If we already have a stream for this peer, attach it
-      const peer = peers.get(peerId);
-      if (peer?.videoStream) {
-        el.srcObject = peer.videoStream;
-        el.play().catch(console.error);
-      }
-    } else {
-      videoElementsRef.current.delete(peerId);
+  // Video element ref callback for remote peers
+  const setVideoRef = useCallback((peer: Peer) => (el: HTMLVideoElement | null) => {
+    if (el && peer.videoStream) {
+      console.log(`Setting video stream for peer ${peer.id}`);
+      el.srcObject = peer.videoStream;
+      el.play().catch(console.error);
     }
-  }, [peers]);
+  }, []);
 
-  // Audio element ref callback
-  const setAudioRef = useCallback((peerId: string) => (el: HTMLAudioElement | null) => {
-    if (el) {
-      audioElementsRef.current.set(peerId, el);
-      // If we already have a stream for this peer, attach it
-      const peer = peers.get(peerId);
-      if (peer?.audioStream) {
-        el.srcObject = peer.audioStream;
-        el.play().catch(console.error);
-      }
-    } else {
-      audioElementsRef.current.delete(peerId);
+  // Audio element ref callback for remote peers
+  const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
+    if (el && peer.audioStream) {
+      console.log(`Setting audio stream for peer ${peer.id}`);
+      el.srcObject = peer.audioStream;
+      el.play().catch(console.error);
     }
-  }, [peers]);
+  }, []);
 
   if (!isConnected) {
     return (
@@ -911,13 +888,9 @@ See you there!`);
         {/* Video Grid */}
         <div className="flex-1 p-4">
           <div 
-            className="h-full w-full"
+            className={`h-full w-full grid gap-4 ${gridLayout.className}`}
             style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(${gridLayout.cols}, 1fr)`,
-              gridTemplateRows: `repeat(${gridLayout.rows}, 1fr)`,
-              gap: '1rem',
-              aspectRatio: totalParticipants === 1 ? '16/9' : 'auto'
+              gridAutoRows: totalParticipants === 1 ? '1fr' : 'minmax(200px, 1fr)'
             }}
           >
             {/* Local Video */}
@@ -942,7 +915,11 @@ See you there!`);
               {!isVideoEnabled && (
                 <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
                   <div className="text-center">
-                    <VideoOff className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                    <div className="w-16 h-16 rounded-full bg-gradient-gold-silver flex items-center justify-center mx-auto mb-2">
+                      <span className="text-white text-xl font-bold">
+                        {displayName.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
                     <span className="text-gray-400 text-sm">Camera Off</span>
                   </div>
                 </div>
@@ -975,20 +952,21 @@ See you there!`);
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.3, delay: index * 0.1 }}
               >
-                <video
-                  ref={setVideoRef(peer.id)}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                  style={{
-                    display: peer.hasVideo ? 'block' : 'none',
-                  }}
-                />
-                <audio
-                  ref={setAudioRef(peer.id)}
-                  autoPlay
-                  playsInline
-                />
+                {peer.hasVideo && peer.videoStream && (
+                  <video
+                    ref={setVideoRef(peer)}
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-cover"
+                  />
+                )}
+                {peer.hasAudio && peer.audioStream && (
+                  <audio
+                    ref={setAudioRef(peer)}
+                    autoPlay
+                    playsInline
+                  />
+                )}
                 {!peer.hasVideo && (
                   <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
                     <div className="text-center">
