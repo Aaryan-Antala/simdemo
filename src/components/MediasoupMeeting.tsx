@@ -89,6 +89,22 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const totalParticipants = peers.size + 1; // +1 for local user
   const gridLayout = getGridLayout(totalParticipants);
 
+  // Effect to handle local video stream attachment
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      console.log('Attaching local stream to video element');
+      localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.muted = true;
+      localVideoRef.current.autoplay = true;
+      localVideoRef.current.playsInline = true;
+      
+      // Force play
+      localVideoRef.current.play().catch(error => {
+        console.error('Error playing local video:', error);
+      });
+    }
+  }, [localStream]);
+
   // Initialize socket connection
   useEffect(() => {
     console.log('Initializing Mediasoup meeting...');
@@ -365,14 +381,11 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       });
       
       console.log('Got user media stream', stream);
+      console.log('Video tracks:', stream.getVideoTracks());
+      console.log('Audio tracks:', stream.getAudioTracks());
+      
+      // Set local stream state first
       setLocalStream(stream);
-
-      // Set local video immediately
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.muted = true;
-        localVideoRef.current.play().catch(console.error);
-      }
 
       // Produce audio and video
       const audioTrack = stream.getAudioTracks()[0];
@@ -776,6 +789,8 @@ See you there!`);
     if (el && peer.videoStream) {
       console.log(`Setting video stream for peer ${peer.id}`);
       el.srcObject = peer.videoStream;
+      el.autoplay = true;
+      el.playsInline = true;
       el.play().catch(console.error);
     }
   }, []);
@@ -785,9 +800,24 @@ See you there!`);
     if (el && peer.audioStream) {
       console.log(`Setting audio stream for peer ${peer.id}`);
       el.srcObject = peer.audioStream;
+      el.autoplay = true;
+      el.playsInline = true;
       el.play().catch(console.error);
     }
   }, []);
+
+  // Local video ref callback
+  const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    localVideoRef.current = el;
+    if (el && localStream) {
+      console.log('Setting local video stream');
+      el.srcObject = localStream;
+      el.muted = true;
+      el.autoplay = true;
+      el.playsInline = true;
+      el.play().catch(console.error);
+    }
+  }, [localStream]);
 
   if (!isConnected) {
     return (
@@ -903,16 +933,16 @@ See you there!`);
               transition={{ duration: 0.3 }}
             >
               <video
-                ref={localVideoRef}
+                ref={setLocalVideoRef}
                 autoPlay
                 muted
                 playsInline
                 className="w-full h-full object-cover"
                 style={{
-                  display: isVideoEnabled ? 'block' : 'none',
+                  display: isVideoEnabled && localStream ? 'block' : 'none',
                 }}
               />
-              {!isVideoEnabled && (
+              {(!isVideoEnabled || !localStream) && (
                 <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
                   <div className="text-center">
                     <div className="w-16 h-16 rounded-full bg-gradient-gold-silver flex items-center justify-center mx-auto mb-2">
@@ -920,7 +950,9 @@ See you there!`);
                         {displayName.charAt(0).toUpperCase()}
                       </span>
                     </div>
-                    <span className="text-gray-400 text-sm">Camera Off</span>
+                    <span className="text-gray-400 text-sm">
+                      {!localStream ? 'Connecting...' : 'Camera Off'}
+                    </span>
                   </div>
                 </div>
               )}
