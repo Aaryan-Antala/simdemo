@@ -49,8 +49,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const recvTransportRef = useRef<any>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const recognitionRef = useRef<any>(null);
-  
-  // Video and audio element management
   const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   
@@ -76,88 +74,22 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   // Calculate grid layout based on participant count
   const getGridLayout = useCallback((participantCount: number) => {
     if (participantCount === 1) {
-      return { cols: 1, rows: 1, className: 'grid-cols-1', maxHeight: '80vh' };
+      return { cols: 1, rows: 1, className: 'grid-cols-1' };
     } else if (participantCount === 2) {
-      return { cols: 2, rows: 1, className: 'grid-cols-2', maxHeight: '60vh' };
+      return { cols: 2, rows: 1, className: 'grid-cols-2' };
     } else if (participantCount <= 4) {
-      return { cols: 2, rows: 2, className: 'grid-cols-2', maxHeight: '40vh' };
+      return { cols: 2, rows: 2, className: 'grid-cols-2' };
     } else if (participantCount <= 6) {
-      return { cols: 3, rows: 2, className: 'grid-cols-3', maxHeight: '35vh' };
+      return { cols: 3, rows: 2, className: 'grid-cols-3' };
     } else if (participantCount <= 9) {
-      return { cols: 3, rows: 3, className: 'grid-cols-3', maxHeight: '30vh' };
+      return { cols: 3, rows: 3, className: 'grid-cols-3' };
     } else {
-      return { cols: 4, rows: Math.ceil(participantCount / 4), className: 'grid-cols-4', maxHeight: '25vh' };
+      return { cols: 4, rows: Math.ceil(participantCount / 4), className: 'grid-cols-4' };
     }
   }, []);
 
   const totalParticipants = peers.size + 1; // +1 for local user
   const gridLayout = getGridLayout(totalParticipants);
-
-  // Function to attach stream to element
-  const attachStreamToElement = useCallback((peerId: string, stream: MediaStream, kind: 'video' | 'audio') => {
-    console.log(`[CLIENT] Attaching ${kind} stream for peer ${peerId}`);
-    
-    if (kind === 'video') {
-      const videoElement = videoElementsRef.current.get(peerId);
-      if (videoElement && stream) {
-        console.log(`[CLIENT] Setting ${kind} stream for peer ${peerId}`);
-        videoElement.srcObject = stream;
-        videoElement.autoplay = true;
-        videoElement.playsInline = true;
-        videoElement.muted = false;
-        videoElement.play().catch(error => {
-          console.error(`[CLIENT] Error playing ${kind} for peer ${peerId}:`, error);
-        });
-      }
-    } else if (kind === 'audio') {
-      const audioElement = audioElementsRef.current.get(peerId);
-      if (audioElement && stream) {
-        console.log(`[CLIENT] Setting ${kind} stream for peer ${peerId}`);
-        audioElement.srcObject = stream;
-        audioElement.autoplay = true;
-        audioElement.playsInline = true;
-        audioElement.muted = false;
-        audioElement.play().catch(error => {
-          console.error(`[CLIENT] Error playing ${kind} for peer ${peerId}:`, error);
-        });
-      }
-    }
-  }, []);
-
-  // Function to create and manage video/audio elements
-  const createMediaElement = useCallback((peerId: string, kind: 'video' | 'audio') => {
-    if (kind === 'video') {
-      if (!videoElementsRef.current.has(peerId)) {
-        console.log(`[CLIENT] Created ${kind} element for peer ${peerId}`);
-        const element = document.createElement('video');
-        element.autoplay = true;
-        element.playsInline = true;
-        element.muted = false;
-        videoElementsRef.current.set(peerId, element);
-        
-        // If peer already has a stream, attach it
-        const peer = peers.get(peerId);
-        if (peer?.videoStream) {
-          attachStreamToElement(peerId, peer.videoStream, 'video');
-        }
-      }
-    } else if (kind === 'audio') {
-      if (!audioElementsRef.current.has(peerId)) {
-        console.log(`[CLIENT] Created ${kind} element for peer ${peerId}`);
-        const element = document.createElement('audio');
-        element.autoplay = true;
-        element.playsInline = true;
-        element.muted = false;
-        audioElementsRef.current.set(peerId, element);
-        
-        // If peer already has a stream, attach it
-        const peer = peers.get(peerId);
-        if (peer?.audioStream) {
-          attachStreamToElement(peerId, peer.audioStream, 'audio');
-        }
-      }
-    }
-  }, [peers, attachStreamToElement]);
 
   // Initialize socket connection
   useEffect(() => {
@@ -165,9 +97,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     setConnectionStatus('Connecting to server...');
     
     socketRef.current = io(`${VITE_MEDIA_API_URL}`, {
-      transports: ['websocket', 'polling'],
-      timeout: 20000,
-      forceNew: true
+      transports: ['websocket', 'polling']
     });
     
     socketRef.current.on('connect', () => {
@@ -176,8 +106,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       joinRoom();
     });
 
-    socketRef.current.on('disconnect', (reason) => {
-      console.log('[CLIENT] Disconnected from mediasoup server:', reason);
+    socketRef.current.on('disconnect', () => {
+      console.log('[CLIENT] Disconnected from mediasoup server');
       setConnectionStatus('Disconnected');
       setIsConnected(false);
     });
@@ -212,7 +142,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
       }
-      // Clean up media elements
+      // Clean up video and audio elements
       videoElementsRef.current.clear();
       audioElementsRef.current.clear();
     };
@@ -409,10 +339,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
         recvTransportRef.current.on('connectionstatechange', (state: string) => {
           console.log('[CLIENT] Receive transport connection state:', state);
-          if (state === 'failed') {
-            console.error('[CLIENT] Receive transport failed - this usually indicates network/firewall issues');
-            setConnectionStatus('Connection failed - check network settings');
-          }
         });
 
         if (sendTransportRef.current) {
@@ -443,12 +369,23 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         },
       });
       
-      console.log('[CLIENT] Got user media stream', stream);
-      console.log('[CLIENT] Video tracks:', stream.getVideoTracks());
-      console.log('[CLIENT] Audio tracks:', stream.getAudioTracks());
+      console.log('[CLIENT] Got user media stream');
       
       // Set local stream state first
       setLocalStream(stream);
+
+      // Attach local stream to video element immediately
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.muted = true;
+        localVideoRef.current.autoplay = true;
+        localVideoRef.current.playsInline = true;
+        try {
+          await localVideoRef.current.play();
+        } catch (error) {
+          console.warn('[CLIENT] Local video play failed:', error);
+        }
+      }
 
       // Produce audio and video
       const audioTrack = stream.getAudioTracks()[0];
@@ -535,16 +472,10 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
           peer.videoStream = stream;
           peer.hasVideo = true;
           console.log(`[CLIENT] Updated peer ${peerId} with video stream`);
-          // Create video element and attach stream
-          createMediaElement(peerId, 'video');
-          attachStreamToElement(peerId, stream, 'video');
         } else if (kind === 'audio') {
           peer.audioStream = stream;
           peer.hasAudio = true;
           console.log(`[CLIENT] Updated peer ${peerId} with audio stream`);
-          // Create audio element and attach stream
-          createMediaElement(peerId, 'audio');
-          attachStreamToElement(peerId, stream, 'audio');
         }
 
         newPeers.set(peerId, peer);
@@ -629,15 +560,14 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const handlePeerLeft = ({ peerId }: any) => {
     console.log(`[CLIENT] Peer left: ${peerId}`);
     
-    // Clean up media elements
+    // Clean up video and audio elements for this peer
     const videoElement = videoElementsRef.current.get(peerId);
-    const audioElement = audioElementsRef.current.get(peerId);
-    
     if (videoElement) {
       videoElement.srcObject = null;
       videoElementsRef.current.delete(peerId);
     }
     
+    const audioElement = audioElementsRef.current.get(peerId);
     if (audioElement) {
       audioElement.srcObject = null;
       audioElementsRef.current.delete(peerId);
@@ -708,7 +638,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         startTranscription();
       } catch (error) {
         alert('Microphone access is required for AI features.');
-        console.error('Microphone access denied:', error);
+        console.error('[CLIENT] Microphone access denied:', error);
       }
     } else {
       setIsAIEnabled(false);
@@ -758,7 +688,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         setNotes(prev => [...prev, newNote]);
       }
     } catch (error) {
-      console.error('Auto notes generation failed:', error);
+      console.error('[CLIENT] Auto notes generation failed:', error);
     } finally {
       setIsProcessing(false);
     }
@@ -791,7 +721,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         setMeetingSummary(data.summary);
       }
     } catch (error) {
-      console.error('Summary generation failed:', error);
+      console.error('[CLIENT] Summary generation failed:', error);
       alert('Failed to generate meeting summary. Please try again.');
     } finally {
       setIsProcessing(false);
@@ -837,7 +767,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error('Failed to copy meeting link:', error);
+      console.error('[CLIENT] Failed to copy meeting link:', error);
     }
   };
 
@@ -870,42 +800,57 @@ See you there!`);
 
   // Video element ref callback for remote peers
   const setVideoRef = useCallback((peer: Peer) => (el: HTMLVideoElement | null) => {
-    if (el) {
-      console.log(`[CLIENT] Setting video ref for peer ${peer.id}`);
+    if (el && peer.videoStream) {
+      console.log(`[CLIENT] Setting video stream for peer ${peer.id}`);
+      
+      // Store reference for cleanup
       videoElementsRef.current.set(peer.id, el);
       
-      // If peer already has a video stream, attach it immediately
-      if (peer.videoStream) {
-        attachStreamToElement(peer.id, peer.videoStream, 'video');
+      // Set stream and play
+      el.srcObject = peer.videoStream;
+      el.autoplay = true;
+      el.playsInline = true;
+      
+      // Handle play promise properly
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            console.log(`[CLIENT] Video playing for peer ${peer.id}`);
+          })
+          .catch(error => {
+            console.warn(`[CLIENT] Error playing video for peer ${peer.id}:`, error);
+          });
       }
     }
-  }, [attachStreamToElement]);
+  }, []);
 
   // Audio element ref callback for remote peers
   const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
-    if (el) {
-      console.log(`[CLIENT] Setting audio ref for peer ${peer.id}`);
+    if (el && peer.audioStream) {
+      console.log(`[CLIENT] Setting audio stream for peer ${peer.id}`);
+      
+      // Store reference for cleanup
       audioElementsRef.current.set(peer.id, el);
       
-      // If peer already has an audio stream, attach it immediately
-      if (peer.audioStream) {
-        attachStreamToElement(peer.id, peer.audioStream, 'audio');
-      }
-    }
-  }, [attachStreamToElement]);
-
-  // Local video ref callback
-  const setLocalVideoRef = useCallback((el: HTMLVideoElement | null) => {
-    localVideoRef.current = el;
-    if (el && localStream) {
-      console.log('[CLIENT] Setting local video stream');
-      el.srcObject = localStream;
-      el.muted = true;
+      // Set stream and play
+      el.srcObject = peer.audioStream;
       el.autoplay = true;
       el.playsInline = true;
-      el.play().catch(console.error);
+      
+      // Handle play promise properly
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            console.log(`[CLIENT] Audio playing for peer ${peer.id}`);
+          })
+          .catch(error => {
+            console.warn(`[CLIENT] Error playing audio for peer ${peer.id}:`, error);
+          });
+      }
     }
-  }, [localStream]);
+  }, []);
 
   if (!isConnected) {
     return (
@@ -918,14 +863,6 @@ See you there!`);
             <p>Room: <span className="font-medium text-primary">{roomName}</span></p>
             <p>Name: <span className="font-medium text-primary">{displayName}</span></p>
           </div>
-          {connectionStatus.includes('failed') && (
-            <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-              <p className="text-red-400 text-sm">
-                Connection failed. This may be due to network or firewall restrictions.
-                Please check your network settings and try again.
-              </p>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -1016,8 +953,7 @@ See you there!`);
           <div 
             className={`h-full w-full grid gap-4 ${gridLayout.className}`}
             style={{
-              gridAutoRows: totalParticipants === 1 ? '1fr' : 'minmax(200px, 1fr)',
-              maxHeight: gridLayout.maxHeight
+              gridAutoRows: totalParticipants === 1 ? '1fr' : 'minmax(200px, 1fr)'
             }}
           >
             {/* Local Video */}
@@ -1030,7 +966,7 @@ See you there!`);
               transition={{ duration: 0.3 }}
             >
               <video
-                ref={setLocalVideoRef}
+                ref={localVideoRef}
                 autoPlay
                 muted
                 playsInline
