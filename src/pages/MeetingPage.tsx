@@ -100,7 +100,7 @@ See you there!`);
     return (
       <div className="min-h-screen bg-primary">
         {/* Meeting Header with Invite Button */}
-        <div className="absolute top-4 right-4 z-50">
+        {/* <div className="absolute top-4 right-4 z-50">
           <Button
             onClick={() => setShowInviteModal(true)}
             variant="secondary"
@@ -110,7 +110,7 @@ See you there!`);
             <Share2 className="w-4 h-4" />
             <span>Invite Others</span>
           </Button>
-        </div>
+        </div> */}
 
         <MediasoupMeeting
           roomName={currentMeeting.roomName}
