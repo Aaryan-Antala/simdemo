@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Device } from 'mediasoup-client';
 import io from 'socket.io-client';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText, Download, Users, Settings } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText, Download, Users, Settings, Share2, Copy, Check, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlassCard from './ui/GlassCard';
 import Button from './ui/Button';
@@ -57,6 +57,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [peers, setPeers] = useState<Map<string, Peer>>(new Map());
   const [showTranscript, setShowTranscript] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [meetingSummary, setMeetingSummary] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -65,6 +66,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [producerToPeer, setProducerToPeer] = useState<Map<string, string>>(new Map());
+  const [copied, setCopied] = useState(false);
 
   // Initialize socket connection
   useEffect(() => {
@@ -765,6 +767,37 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     URL.revokeObjectURL(url);
   };
 
+  const copyMeetingLink = async () => {
+    const meetingLink = `${window.location.origin}/meetings?room=${encodeURIComponent(roomName)}`;
+    try {
+      await navigator.clipboard.writeText(meetingLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy meeting link:', error);
+    }
+  };
+
+  const shareViaEmail = () => {
+    const subject = encodeURIComponent(`Join my video meeting: ${roomName}`);
+    const body = encodeURIComponent(`Hi! 
+
+I'd like to invite you to join my video meeting.
+
+Meeting Room: ${roomName}
+Meeting Link: ${window.location.origin}/meetings?room=${encodeURIComponent(roomName)}
+
+To join:
+1. Click the link above or go to ${window.location.origin}/meetings
+2. Click "Join Meeting"
+3. Enter the room name: ${roomName}
+4. Enter your name and join!
+
+See you there!`);
+    
+    window.open(`mailto:?subject=${subject}&body=${body}`);
+  };
+
   // Debug: log when the video ref is set
   const handleLocalVideoRef = (el: HTMLVideoElement | null) => {
     localVideoRef.current = el;
@@ -860,66 +893,79 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
   return (
     <div className="h-screen flex flex-col bg-primary">
-      {/* Meeting Header */}
-      <div className="glass-panel border-b silver-border p-4 flex justify-between items-center">
-        <div className="flex items-center space-x-4">
-          <h1 className="text-lg font-bold gradient-gold-silver">
-            Meeting: {roomName}
-          </h1>
-          <div className="flex items-center space-x-2 text-sm text-secondary">
-            <Users className="w-4 h-4" />
-            <span>{peers.size + 1} participants</span>
+      {/* Meeting Header - Fixed at top */}
+      <div className="glass-panel border-b silver-border p-4 flex-shrink-0">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-4">
+            <h1 className="text-lg font-bold gradient-gold-silver">
+              Meeting: {roomName}
+            </h1>
+            <div className="flex items-center space-x-2 text-sm text-secondary">
+              <Users className="w-4 h-4" />
+              <span>{peers.size + 1} participants</span>
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center space-x-3">
-          {/* AI Toggle */}
-          <Button
-            onClick={toggleAI}
-            variant={isAIEnabled ? "premium" : "secondary"}
-            size="sm"
-            className="flex items-center space-x-2"
-          >
-            {isAIEnabled ? <Bot className="w-4 h-4" /> : <BotOff className="w-4 h-4" />}
-            <span>{isAIEnabled ? 'AI On' : 'AI Off'}</span>
-          </Button>
-
-          {/* Transcript Toggle */}
-          {isAIEnabled && (
+          <div className="flex items-center space-x-3">
+            {/* AI Toggle */}
             <Button
-              onClick={() => setShowTranscript(!showTranscript)}
+              onClick={toggleAI}
+              variant={isAIEnabled ? "premium" : "secondary"}
+              size="sm"
+              className="flex items-center space-x-2"
+            >
+              {isAIEnabled ? <Bot className="w-4 h-4" /> : <BotOff className="w-4 h-4" />}
+              <span>{isAIEnabled ? 'AI On' : 'AI Off'}</span>
+            </Button>
+
+            {/* Transcript Toggle */}
+            {isAIEnabled && (
+              <Button
+                onClick={() => setShowTranscript(!showTranscript)}
+                variant="secondary"
+                size="sm"
+                className="flex items-center space-x-2"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Transcript ({transcript.length})</span>
+              </Button>
+            )}
+
+            {/* Notes Toggle */}
+            {isAIEnabled && (
+              <Button
+                onClick={() => setShowNotes(!showNotes)}
+                variant="secondary"
+                size="sm"
+                className="flex items-center space-x-2"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Notes ({notes.length})</span>
+              </Button>
+            )}
+
+            {/* Invite Others Button */}
+            <Button
+              onClick={() => setShowInviteModal(true)}
               variant="secondary"
               size="sm"
               className="flex items-center space-x-2"
             >
-              <FileText className="w-4 h-4" />
-              <span>Transcript ({transcript.length})</span>
+              <Share2 className="w-4 h-4" />
+              <span>Invite Others</span>
             </Button>
-          )}
 
-          {/* Notes Toggle */}
-          {isAIEnabled && (
+            {/* Leave Meeting */}
             <Button
-              onClick={() => setShowNotes(!showNotes)}
+              onClick={handleLeave}
               variant="secondary"
               size="sm"
-              className="flex items-center space-x-2"
+              className="flex items-center space-x-2 bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
             >
-              <FileText className="w-4 h-4" />
-              <span>Notes ({notes.length})</span>
+              <PhoneOff className="w-4 h-4 text-red-400" />
+              <span className="text-red-400">Leave</span>
             </Button>
-          )}
-
-          {/* Leave Meeting */}
-          <Button
-            onClick={handleLeave}
-            variant="secondary"
-            size="sm"
-            className="flex items-center space-x-2 bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
-          >
-            <PhoneOff className="w-4 h-4 text-red-400" />
-            <span className="text-red-400">Leave</span>
-          </Button>
+          </div>
         </div>
       </div>
 
@@ -944,7 +990,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
                 style={{
                   display: isVideoEnabled ? 'block' : 'none',
                   background: '#222',
-                  border: '2px solid red',
                 }}
               />
               {!isVideoEnabled && (
@@ -1149,8 +1194,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         </AnimatePresence>
       </div>
 
-      {/* Controls */}
-      <div className="glass-panel border-t silver-border p-4">
+      {/* Controls - Fixed at bottom */}
+      <div className="glass-panel border-t silver-border p-4 flex-shrink-0">
         <div className="flex justify-center items-center space-x-4">
           <button
             onClick={toggleAudio}
@@ -1187,20 +1232,92 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         </div>
       </div>
 
-      {/* Debugging: Log video element info */}
-      <div className="hidden">
-        {/* After your app loads, open the browser console and run:
-        console.log('__localVideoRef:', window.__localVideoRef);
-        if (window.__localVideoRef) {
-          const v = window.__localVideoRef;
-          console.log('srcObject:', v.srcObject);
-          if (v.srcObject) {
-            console.log('videoTracks:', v.srcObject.getVideoTracks());
-            console.log('audioTracks:', v.srcObject.getAudioTracks());
-          }
-          console.log('videoWidth:', v.videoWidth, 'videoHeight:', v.videoHeight, 'readyState:', v.readyState);
-        } */}
-      </div>
+      {/* Invite Others Modal */}
+      <AnimatePresence>
+        {showInviteModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-md"
+            >
+              <GlassCard className="p-8" goldBorder>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-bold gradient-gold-silver">Invite Others</h2>
+                  <button
+                    onClick={() => setShowInviteModal(false)}
+                    className="text-secondary hover:text-primary"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-primary mb-2">
+                      Room Name
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={roomName}
+                        readOnly
+                        className="flex-1 glass-panel rounded-lg px-4 py-3 text-primary bg-gray-500/10"
+                      />
+                      <Button
+                        onClick={() => navigator.clipboard.writeText(roomName)}
+                        variant="ghost"
+                        size="sm"
+                        className="px-3"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-primary mb-2">
+                      Meeting Link
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={`${window.location.origin}/meetings?room=${encodeURIComponent(roomName)}`}
+                        readOnly
+                        className="flex-1 glass-panel rounded-lg px-4 py-3 text-primary bg-gray-500/10 text-sm"
+                      />
+                      <Button
+                        onClick={copyMeetingLink}
+                        variant="ghost"
+                        size="sm"
+                        className="px-3"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Button
+                      onClick={shareViaEmail}
+                      variant="secondary"
+                      className="w-full justify-start"
+                    >
+                      <Share2 className="w-4 h-4 mr-2" />
+                      Share via Email
+                    </Button>
+                  </div>
+
+                  <div className="text-xs text-secondary">
+                    Share the room name or link with others so they can join your meeting.
+                  </div>
+                </div>
+              </GlassCard>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

@@ -656,9 +656,9 @@ const AssistantPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-primary flex flex-col">
-      {/* Header */}
-      <header className="glass-panel border-0 border-b silver-border">
+    <div className="h-screen bg-primary flex flex-col overflow-hidden">
+      {/* Header - Fixed */}
+      <header className="glass-panel border-0 border-b silver-border flex-shrink-0">
         <div className="max-w-7xl mx-auto container-padding">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
@@ -717,9 +717,9 @@ const AssistantPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col max-w-6xl mx-auto w-full">
-        {/* Messages */}
+      {/* Main Content - Flexible layout with proper scrolling */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Messages Area - Scrollable */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.length === 0 && (
             <div className="text-center py-12">
@@ -789,8 +789,8 @@ const AssistantPage: React.FC = () => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <div className="glass-panel border-t silver-border p-6">
+        {/* Input Area - Fixed at bottom */}
+        <div className="glass-panel border-t silver-border p-6 flex-shrink-0">
           <div className="flex items-end space-x-4">
             <div className="flex-1">
               <textarea
@@ -934,20 +934,6 @@ const AssistantPage: React.FC = () => {
                   >
                     Close
                   </Button>
-                  {/* <Button
-                    onClick={async () => {
-                      if (selectedEmailForModal) {
-                        setSelectedEmails(new Set([selectedEmailForModal.id]));
-                        await handleDeleteSelectedEmails();
-                        setShowEmailModal(false);
-                      }
-                    }}
-                    variant="secondary"
-                    className="bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
-                  >
-                    <Trash2 className="w-4 h-4 mr-2 text-red-400" />
-                    <span className="text-red-400">Delete Email</span>
-                  </Button> */}
                 </div>
               </GlassCard>
             </motion.div>
