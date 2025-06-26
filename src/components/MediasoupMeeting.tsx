@@ -68,7 +68,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [producerToPeer, setProducerToPeer] = useState<Map<string, string>>(new Map());
   const [copied, setCopied] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Initialize socket connection
   useEffect(() => {
@@ -625,6 +624,16 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
+        
+        // Also pause/resume the audio producer
+        const audioProducer = producers.get('audio');
+        if (audioProducer) {
+          if (audioTrack.enabled) {
+            audioProducer.resume();
+          } else {
+            audioProducer.pause();
+          }
+        }
       }
     }
   };
@@ -635,6 +644,16 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoEnabled(videoTrack.enabled);
+        
+        // Also pause/resume the video producer
+        const videoProducer = producers.get('video');
+        if (videoProducer) {
+          if (videoTrack.enabled) {
+            videoProducer.resume();
+          } else {
+            videoProducer.pause();
+          }
+        }
       }
     }
   };
@@ -1002,7 +1021,7 @@ See you there!`);
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="relative glass-panel rounded-lg overflow-hidden group"
+              className="relative glass-panel rounded-lg overflow-hidden group aspect-video"
             >
               <video
                 ref={handleLocalVideoRef}
@@ -1048,7 +1067,7 @@ See you there!`);
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: index * 0.1 }}
-                className="relative glass-panel rounded-lg overflow-hidden group"
+                className="relative glass-panel rounded-lg overflow-hidden group aspect-video"
               >
                 <video
                   id={`remote-video-${peer.id}`}
@@ -1072,7 +1091,7 @@ See you there!`);
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="relative glass-panel rounded-lg overflow-hidden flex items-center justify-center col-span-full"
+                className="relative glass-panel rounded-lg overflow-hidden flex items-center justify-center col-span-full aspect-video"
               >
                 <div className="text-center">
                   <Users className="w-16 h-16 text-secondary mx-auto mb-4 opacity-50" />
