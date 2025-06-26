@@ -374,19 +374,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       // Set local stream state first
       setLocalStream(stream);
 
-      // Attach local stream to video element immediately
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.muted = true;
-        localVideoRef.current.autoplay = true;
-        localVideoRef.current.playsInline = true;
-        try {
-          await localVideoRef.current.play();
-        } catch (error) {
-          console.warn('[CLIENT] Local video play failed:', error);
-        }
-      }
-
       // Produce audio and video
       const audioTrack = stream.getAudioTracks()[0];
       const videoTrack = stream.getVideoTracks()[0];
@@ -419,6 +406,31 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       setConnectionStatus('Media access denied');
     }
   };
+
+  // Effect to handle local video stream attachment
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      console.log('[CLIENT] Attaching local stream to video element');
+      const videoElement = localVideoRef.current;
+      
+      videoElement.srcObject = localStream;
+      videoElement.muted = true;
+      videoElement.autoplay = true;
+      videoElement.playsInline = true;
+      
+      // Handle play promise properly
+      const playPromise = videoElement.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            console.log('[CLIENT] Local video playing successfully');
+          })
+          .catch(error => {
+            console.warn('[CLIENT] Local video play failed:', error);
+          });
+      }
+    }
+  }, [localStream]);
 
   const handleTransportConnected = (data: any) => {
     console.log('[CLIENT] Transport connected:', data.transportId);
