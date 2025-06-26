@@ -690,14 +690,14 @@ const WorkspacePage: React.FC = () => {
             {activePanel === 'meeting' && (
               <motion.div 
                 key="meeting-panel"
-                className="flex-1 h-full overflow-hidden"
+                className="flex-1 flex flex-col h-full"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.2 }}
               >
                 {currentMeeting ? (
-                  <div className="h-full w-full">
+                  <div className="flex-1 h-full">
                     <MediasoupMeeting
                       roomName={currentMeeting.roomName}
                       displayName={currentMeeting.displayName}
