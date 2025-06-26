@@ -48,9 +48,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const sendTransportRef = useRef<any>(null);
   const recvTransportRef = useRef<any>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<any>(null);
-  const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
-  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   
   const [isConnected, setIsConnected] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
@@ -65,7 +64,6 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [meetingSummary, setMeetingSummary] = useState<string | null>(null);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [producers, setProducers] = useState<Map<string, any>>(new Map());
   const [consumers, setConsumers] = useState<Map<string, any>>(new Map());
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
@@ -91,34 +89,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const totalParticipants = peers.size + 1; // +1 for local user
   const gridLayout = getGridLayout(totalParticipants);
 
-  // Effect to handle local video stream attachment
-  useEffect(() => {
-    if (localStream && localVideoRef.current) {
-      console.log('Attaching local stream to video element');
-      const videoElement = localVideoRef.current;
-      
-      // Stop any existing stream
-      if (videoElement.srcObject) {
-        const existingStream = videoElement.srcObject as MediaStream;
-        existingStream.getTracks().forEach(track => track.stop());
-      }
-      
-      videoElement.srcObject = localStream;
-      videoElement.muted = true;
-      videoElement.autoplay = true;
-      videoElement.playsInline = true;
-      
-      // Force play with error handling
-      const playPromise = videoElement.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(error => {
-          console.error('Error playing local video:', error);
-        });
-      }
-    }
-  }, [localStream]);
-
-  // Initialize socket connection
+  // Initialize socket connection and MediaSoup
   useEffect(() => {
     console.log('Initializing Mediasoup meeting...');
     setConnectionStatus('Connecting to server...');
@@ -166,12 +137,9 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
       }
-      // Clean up video and audio elements
-      videoElementsRef.current.clear();
-      audioElementsRef.current.clear();
     };
   }, [roomName, displayName]);
 
@@ -397,11 +365,22 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       });
       
       console.log('Got user media stream', stream);
-      console.log('Video tracks:', stream.getVideoTracks());
-      console.log('Audio tracks:', stream.getAudioTracks());
-      
-      // Set local stream state first
-      setLocalStream(stream);
+      localStreamRef.current = stream;
+
+      // Set local video immediately
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.muted = true;
+        localVideoRef.current.autoplay = true;
+        localVideoRef.current.playsInline = true;
+        
+        try {
+          await localVideoRef.current.play();
+          console.log('Local video playing successfully');
+        } catch (playError) {
+          console.error('Error playing local video:', playError);
+        }
+      }
 
       // Produce audio and video
       const audioTrack = stream.getAudioTracks()[0];
@@ -467,64 +446,52 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       // Resume the consumer immediately
       socketRef.current.emit('resumeConsumer', { consumerId: id });
 
-      // Create stream and attach to element
+      // Create stream and update peer state
       const stream = new MediaStream([consumer.track]);
       
-      // Update peer with stream info and attach to elements
+      // Update peer with stream info
       setPeers(prev => {
         const newPeers = new Map(prev);
-        const existingPeer = newPeers.get(peerId);
-        
-        const peer: Peer = {
+        const existingPeer = newPeers.get(peerId) || {
           id: peerId,
-          displayName: existingPeer?.displayName || `User ${peerId.slice(0, 8)}`,
-          hasVideo: existingPeer?.hasVideo || false,
-          hasAudio: existingPeer?.hasAudio || false,
-          videoElement: existingPeer?.videoElement,
-          audioElement: existingPeer?.audioElement
+          displayName: `User ${peerId.slice(0, 8)}`,
+          hasVideo: false,
+          hasAudio: false
         };
 
         if (kind === 'video') {
-          peer.hasVideo = true;
-          console.log(`Updated peer ${peerId} with video stream`);
-          
-          // Attach video stream to element if it exists
-          const videoElement = videoElementsRef.current.get(peerId);
-          if (videoElement) {
-            console.log(`Attaching video stream to element for peer ${peerId}`);
-            videoElement.srcObject = stream;
+          existingPeer.hasVideo = true;
+          // Create video element for this peer if it doesn't exist
+          if (!existingPeer.videoElement) {
+            const videoElement = document.createElement('video');
             videoElement.autoplay = true;
             videoElement.playsInline = true;
-            
-            const playPromise = videoElement.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(error => {
-                console.error(`Error playing video for peer ${peerId}:`, error);
-              });
-            }
+            videoElement.muted = false;
+            videoElement.style.width = '100%';
+            videoElement.style.height = '100%';
+            videoElement.style.objectFit = 'cover';
+            existingPeer.videoElement = videoElement;
           }
-        } else if (kind === 'audio') {
-          peer.hasAudio = true;
-          console.log(`Updated peer ${peerId} with audio stream`);
           
-          // Attach audio stream to element if it exists
-          const audioElement = audioElementsRef.current.get(peerId);
-          if (audioElement) {
-            console.log(`Attaching audio stream to element for peer ${peerId}`);
-            audioElement.srcObject = stream;
+          existingPeer.videoElement.srcObject = stream;
+          existingPeer.videoElement.play().catch(console.error);
+          console.log(`Set video stream for peer ${peerId}`);
+        } else if (kind === 'audio') {
+          existingPeer.hasAudio = true;
+          // Create audio element for this peer if it doesn't exist
+          if (!existingPeer.audioElement) {
+            const audioElement = document.createElement('audio');
             audioElement.autoplay = true;
             audioElement.playsInline = true;
-            
-            const playPromise = audioElement.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(error => {
-                console.error(`Error playing audio for peer ${peerId}:`, error);
-              });
-            }
+            existingPeer.audioElement = audioElement;
           }
+          
+          existingPeer.audioElement.srcObject = stream;
+          existingPeer.audioElement.play().catch(console.error);
+          console.log(`Set audio stream for peer ${peerId}`);
         }
 
-        newPeers.set(peerId, peer);
+        newPeers.set(peerId, existingPeer);
         return newPeers;
       });
 
@@ -588,17 +555,14 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     console.log(`Peer joined: ${peerId} (${peerDisplayName})`);
     setPeers(prev => {
       const newPeers = new Map(prev);
-      const existingPeer = newPeers.get(peerId);
-      
-      newPeers.set(peerId, {
+      const existingPeer = newPeers.get(peerId) || {
         id: peerId,
         displayName: peerDisplayName,
-        hasVideo: existingPeer?.hasVideo || false,
-        hasAudio: existingPeer?.hasAudio || false,
-        videoElement: existingPeer?.videoElement,
-        audioElement: existingPeer?.audioElement
-      });
+        hasVideo: false,
+        hasAudio: false
+      };
       
+      newPeers.set(peerId, existingPeer);
       return newPeers;
     });
   };
@@ -607,13 +571,19 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     console.log(`Peer left: ${peerId}`);
     setPeers(prev => {
       const newPeers = new Map(prev);
+      const peer = newPeers.get(peerId);
+      if (peer) {
+        // Clean up video and audio elements
+        if (peer.videoElement) {
+          peer.videoElement.srcObject = null;
+        }
+        if (peer.audioElement) {
+          peer.audioElement.srcObject = null;
+        }
+      }
       newPeers.delete(peerId);
       return newPeers;
     });
-    
-    // Clean up video and audio elements
-    videoElementsRef.current.delete(peerId);
-    audioElementsRef.current.delete(peerId);
   };
 
   const handleExistingPeers = (existingPeers: any[]) => {
@@ -648,8 +618,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const toggleAudio = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
+    if (localStreamRef.current) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
@@ -658,8 +628,8 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoEnabled(videoTrack.enabled);
@@ -828,77 +798,11 @@ See you there!`);
   };
 
   const handleLeave = () => {
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
     }
     onLeave();
   };
-
-  // Video element ref callback for remote peers
-  const setVideoRef = useCallback((peerId: string) => (el: HTMLVideoElement | null) => {
-    if (el) {
-      console.log(`Setting video element ref for peer ${peerId}`);
-      videoElementsRef.current.set(peerId, el);
-      
-      // If we already have a peer with video stream, attach it immediately
-      const peer = peers.get(peerId);
-      if (peer && peer.hasVideo) {
-        // Find the consumer for this peer's video
-        const videoConsumer = Array.from(consumers.values()).find(consumer => 
-          consumer.kind === 'video' && consumer.appData?.peerId === peerId
-        );
-        
-        if (videoConsumer) {
-          const stream = new MediaStream([videoConsumer.track]);
-          el.srcObject = stream;
-          el.autoplay = true;
-          el.playsInline = true;
-          
-          const playPromise = el.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(error => {
-              console.error(`Error playing video for peer ${peerId}:`, error);
-            });
-          }
-        }
-      }
-    } else {
-      videoElementsRef.current.delete(peerId);
-    }
-  }, [peers, consumers]);
-
-  // Audio element ref callback for remote peers
-  const setAudioRef = useCallback((peerId: string) => (el: HTMLAudioElement | null) => {
-    if (el) {
-      console.log(`Setting audio element ref for peer ${peerId}`);
-      audioElementsRef.current.set(peerId, el);
-      
-      // If we already have a peer with audio stream, attach it immediately
-      const peer = peers.get(peerId);
-      if (peer && peer.hasAudio) {
-        // Find the consumer for this peer's audio
-        const audioConsumer = Array.from(consumers.values()).find(consumer => 
-          consumer.kind === 'audio' && consumer.appData?.peerId === peerId
-        );
-        
-        if (audioConsumer) {
-          const stream = new MediaStream([audioConsumer.track]);
-          el.srcObject = stream;
-          el.autoplay = true;
-          el.playsInline = true;
-          
-          const playPromise = el.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(error => {
-              console.error(`Error playing audio for peer ${peerId}:`, error);
-            });
-          }
-        }
-      }
-    } else {
-      audioElementsRef.current.delete(peerId);
-    }
-  }, [peers, consumers]);
 
   if (!isConnected) {
     return (
@@ -917,403 +821,366 @@ See you there!`);
   }
 
   return (
-    <div className="h-screen flex flex-col bg-primary">
-      {/* Meeting Header - Fixed at top */}
-      <div className="glass-panel border-b silver-border p-4 flex-shrink-0 z-50">
-        <div className="flex justify-between items-center">
-          <div className="flex items-center space-x-4">
-            <h1 className="text-lg font-bold gradient-gold-silver">
-              Meeting: {roomName}
-            </h1>
-            <div className="flex items-center space-x-2 text-sm text-secondary">
-              <Users className="w-4 h-4" />
-              <span>{totalParticipants} participant{totalParticipants !== 1 ? 's' : ''}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-3">
-            {/* AI Toggle */}
-            <Button
-              onClick={toggleAI}
-              variant={isAIEnabled ? "premium" : "secondary"}
-              size="sm"
-              className="flex items-center space-x-2"
-            >
-              {isAIEnabled ? <Bot className="w-4 h-4" /> : <BotOff className="w-4 h-4" />}
-              <span>{isAIEnabled ? 'AI On' : 'AI Off'}</span>
-            </Button>
-
-            {/* Transcript Toggle */}
-            {isAIEnabled && (
-              <Button
-                onClick={() => setShowTranscript(!showTranscript)}
-                variant="secondary"
-                size="sm"
-                className="flex items-center space-x-2"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Transcript ({transcript.length})</span>
-              </Button>
-            )}
-
-            {/* Notes Toggle */}
-            {isAIEnabled && (
-              <Button
-                onClick={() => setShowNotes(!showNotes)}
-                variant="secondary"
-                size="sm"
-                className="flex items-center space-x-2"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Notes ({notes.length})</span>
-              </Button>
-            )}
-
-            {/* Invite Others Button */}
-            <Button
-              onClick={() => setShowInviteModal(true)}
-              variant="secondary"
-              size="sm"
-              className="flex items-center space-x-2"
-            >
-              <Share2 className="w-4 h-4" />
-              <span>Invite Others</span>
-            </Button>
-
-            {/* Leave Meeting */}
-            <Button
-              onClick={handleLeave}
-              variant="secondary"
-              size="sm"
-              className="flex items-center space-x-2 bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
-            >
-              <PhoneOff className="w-4 h-4 text-red-400" />
-              <span className="text-red-400">Leave</span>
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Meeting Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Video Grid */}
-        <div className="flex-1 p-4">
-          <div 
-            className={`h-full w-full grid gap-4 ${gridLayout.className}`}
-            style={{
-              gridAutoRows: totalParticipants === 1 ? '1fr' : 'minmax(200px, 1fr)'
-            }}
+    <div className="h-screen flex flex-col bg-primary relative">
+      {/* Video Grid - Full screen */}
+      <div className="flex-1 p-4">
+        <div 
+          className={`h-full w-full grid gap-4 ${gridLayout.className}`}
+          style={{
+            gridAutoRows: totalParticipants === 1 ? '1fr' : 'minmax(200px, 1fr)'
+          }}
+        >
+          {/* Local Video */}
+          <motion.div
+            layout
+            className="relative glass-panel rounded-lg overflow-hidden bg-gray-900"
+            style={{ aspectRatio: '16/9' }}
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
           >
-            {/* Local Video */}
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+              style={{
+                display: isVideoEnabled ? 'block' : 'none',
+              }}
+            />
+            {!isVideoEnabled && (
+              <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-16 h-16 rounded-full bg-gradient-gold-silver flex items-center justify-center mx-auto mb-2">
+                    <span className="text-white text-xl font-bold">
+                      {displayName.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="text-gray-400 text-sm">Camera Off</span>
+                </div>
+              </div>
+            )}
+            <div className="absolute bottom-2 left-2 glass-panel px-3 py-1 rounded-full text-sm">
+              <span className="text-primary font-medium">{displayName} (You)</span>
+            </div>
+            <div className="absolute top-2 right-2 flex space-x-1">
+              {!isAudioEnabled && (
+                <div className="glass-panel p-1 rounded-full bg-red-500/20">
+                  <MicOff className="w-3 h-3 text-red-400" />
+                </div>
+              )}
+              {!isVideoEnabled && (
+                <div className="glass-panel p-1 rounded-full bg-red-500/20">
+                  <VideoOff className="w-3 h-3 text-red-400" />
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Remote Videos */}
+          {Array.from(peers.values()).map((peer, index) => (
             <motion.div
+              key={peer.id}
               layout
               className="relative glass-panel rounded-lg overflow-hidden bg-gray-900"
               style={{ aspectRatio: '16/9' }}
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3 }}
+              transition={{ duration: 0.3, delay: index * 0.1 }}
             >
-              <video
-                ref={localVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="w-full h-full object-cover"
-                style={{
-                  display: isVideoEnabled && localStream ? 'block' : 'none',
-                }}
-              />
-              {(!isVideoEnabled || !localStream) && (
+              {peer.hasVideo && peer.videoElement && (
+                <div 
+                  ref={(el) => {
+                    if (el && peer.videoElement && !el.contains(peer.videoElement)) {
+                      el.appendChild(peer.videoElement);
+                    }
+                  }}
+                  className="w-full h-full"
+                />
+              )}
+              {peer.hasAudio && peer.audioElement && (
+                <div 
+                  ref={(el) => {
+                    if (el && peer.audioElement && !el.contains(peer.audioElement)) {
+                      el.appendChild(peer.audioElement);
+                    }
+                  }}
+                  className="hidden"
+                />
+              )}
+              {!peer.hasVideo && (
                 <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
                   <div className="text-center">
                     <div className="w-16 h-16 rounded-full bg-gradient-gold-silver flex items-center justify-center mx-auto mb-2">
                       <span className="text-white text-xl font-bold">
-                        {displayName.charAt(0).toUpperCase()}
+                        {peer.displayName.charAt(0).toUpperCase()}
                       </span>
                     </div>
-                    <span className="text-gray-400 text-sm">
-                      {!localStream ? 'Connecting...' : 'Camera Off'}
-                    </span>
+                    <span className="text-gray-400 text-sm">Camera Off</span>
                   </div>
                 </div>
               )}
               <div className="absolute bottom-2 left-2 glass-panel px-3 py-1 rounded-full text-sm">
-                <span className="text-primary font-medium">{displayName} (You)</span>
+                <span className="text-primary font-medium">{peer.displayName}</span>
               </div>
               <div className="absolute top-2 right-2 flex space-x-1">
-                {!isAudioEnabled && (
+                {!peer.hasAudio && (
                   <div className="glass-panel p-1 rounded-full bg-red-500/20">
                     <MicOff className="w-3 h-3 text-red-400" />
                   </div>
                 )}
-                {!isVideoEnabled && (
+                {!peer.hasVideo && (
                   <div className="glass-panel p-1 rounded-full bg-red-500/20">
                     <VideoOff className="w-3 h-3 text-red-400" />
                   </div>
                 )}
               </div>
             </motion.div>
-
-            {/* Remote Videos */}
-            {Array.from(peers.values()).map((peer, index) => (
-              <motion.div
-                key={peer.id}
-                layout
-                className="relative glass-panel rounded-lg overflow-hidden bg-gray-900"
-                style={{ aspectRatio: '16/9' }}
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3, delay: index * 0.1 }}
-              >
-                {/* Video Element */}
-                <video
-                  ref={setVideoRef(peer.id)}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                  style={{
-                    display: peer.hasVideo ? 'block' : 'none'
-                  }}
-                />
-                
-                {/* Audio Element (hidden) */}
-                <audio
-                  ref={setAudioRef(peer.id)}
-                  autoPlay
-                  playsInline
-                  style={{ display: 'none' }}
-                />
-                
-                {/* Fallback when no video */}
-                {!peer.hasVideo && (
-                  <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-16 h-16 rounded-full bg-gradient-gold-silver flex items-center justify-center mx-auto mb-2">
-                        <span className="text-white text-xl font-bold">
-                          {peer.displayName.charAt(0).toUpperCase()}
-                        </span>
-                      </div>
-                      <span className="text-gray-400 text-sm">Camera Off</span>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="absolute bottom-2 left-2 glass-panel px-3 py-1 rounded-full text-sm">
-                  <span className="text-primary font-medium">{peer.displayName}</span>
-                </div>
-                <div className="absolute top-2 right-2 flex space-x-1">
-                  {!peer.hasAudio && (
-                    <div className="glass-panel p-1 rounded-full bg-red-500/20">
-                      <MicOff className="w-3 h-3 text-red-400" />
-                    </div>
-                  )}
-                  {!peer.hasVideo && (
-                    <div className="glass-panel p-1 rounded-full bg-red-500/20">
-                      <VideoOff className="w-3 h-3 text-red-400" />
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-
-          {/* AI Status Overlay */}
-          {isAIEnabled && (
-            <div className="absolute top-20 left-8 glass-panel px-3 py-2 rounded-lg z-40">
-              <div className="flex items-center space-x-2">
-                <div className={`w-2 h-2 rounded-full ${isTranscribing ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-                <span className="text-sm text-primary font-medium">
-                  {isTranscribing ? 'AI Listening' : 'AI Ready'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Processing Indicator */}
-          {isProcessing && (
-            <div className="absolute top-20 right-8 glass-panel px-3 py-2 rounded-lg z-40">
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 border-2 border-gold-text border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-primary">Processing...</span>
-              </div>
-            </div>
-          )}
+          ))}
         </div>
-
-        {/* Transcript Panel */}
-        <AnimatePresence>
-          {showTranscript && (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 400, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              className="glass-panel border-l silver-border flex flex-col z-30"
-            >
-              <div className="p-4 border-b silver-border">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-primary">Live Transcript</h3>
-                  <div className="flex space-x-2">
-                    <Button
-                      onClick={downloadTranscript}
-                      variant="ghost"
-                      size="sm"
-                      disabled={transcript.length === 0}
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={() => setShowTranscript(false)}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      ×
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {transcript.map((entry) => (
-                  <div key={entry.id} className="glass-panel p-3 rounded-lg">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium text-primary text-sm">{entry.speaker}</span>
-                      <span className="text-xs text-secondary">
-                        {entry.timestamp.toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-secondary">{entry.text}</p>
-                  </div>
-                ))}
-                
-                {transcript.length === 0 && (
-                  <div className="text-center text-secondary py-8">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>Transcript will appear here when AI is listening</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Notes Panel */}
-        <AnimatePresence>
-          {showNotes && (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 400, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              className="glass-panel border-l silver-border flex flex-col z-30"
-            >
-              <div className="p-4 border-b silver-border">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-primary">AI Notes</h3>
-                  <div className="flex space-x-2">
-                    <Button
-                      onClick={generateMeetingSummary}
-                      variant="ghost"
-                      size="sm"
-                      disabled={transcript.length === 0 || isProcessing}
-                    >
-                      <Bot className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={downloadNotes}
-                      variant="ghost"
-                      size="sm"
-                      disabled={notes.length === 0}
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={() => setShowNotes(false)}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      ×
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {/* Meeting Summary */}
-                {meetingSummary && (
-                  <div className="glass-panel p-4 rounded-lg border-gold-border">
-                    <h4 className="font-bold text-primary mb-2 flex items-center">
-                      <Bot className="w-4 h-4 mr-2" />
-                      Meeting Summary
-                    </h4>
-                    <p className="text-sm text-secondary whitespace-pre-wrap">{meetingSummary}</p>
-                  </div>
-                )}
-
-                {/* Auto Notes */}
-                {notes.map((note) => (
-                  <div key={note.id} className="glass-panel p-3 rounded-lg">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        note.type === 'auto' ? 'bg-blue-500/20 text-blue-400' : 'bg-green-500/20 text-green-400'
-                      }`}>
-                        {note.type === 'auto' ? 'AI Generated' : 'Manual'}
-                      </span>
-                      <span className="text-xs text-secondary">
-                        {note.timestamp.toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-secondary">{note.content}</p>
-                  </div>
-                ))}
-                
-                {notes.length === 0 && (
-                  <div className="text-center text-secondary py-8">
-                    <Bot className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>AI will automatically take notes during the meeting</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
-      {/* Controls - Fixed at bottom */}
-      <div className="glass-panel border-t silver-border p-4 flex-shrink-0 z-50">
-        <div className="flex justify-center items-center space-x-4">
+      {/* Floating Controls - Bottom Center */}
+      <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50">
+        <div className="glass-panel rounded-full p-4 flex items-center space-x-4 shadow-2xl">
           <button
             onClick={toggleAudio}
-            className={`glass-panel p-4 rounded-full glass-panel-hover transition-all ${
-              !isAudioEnabled ? 'bg-red-500/20 border-red-500/50' : ''
+            className={`p-3 rounded-full transition-all ${
+              !isAudioEnabled ? 'bg-red-500/20 border-red-500/50' : 'glass-panel-hover'
             }`}
           >
             {isAudioEnabled ? (
-              <Mic className="w-6 h-6 text-primary" />
+              <Mic className="w-5 h-5 text-primary" />
             ) : (
-              <MicOff className="w-6 h-6 text-red-400" />
+              <MicOff className="w-5 h-5 text-red-400" />
             )}
           </button>
 
           <button
             onClick={toggleVideo}
-            className={`glass-panel p-4 rounded-full glass-panel-hover transition-all ${
-              !isVideoEnabled ? 'bg-red-500/20 border-red-500/50' : ''
+            className={`p-3 rounded-full transition-all ${
+              !isVideoEnabled ? 'bg-red-500/20 border-red-500/50' : 'glass-panel-hover'
             }`}
           >
             {isVideoEnabled ? (
-              <Video className="w-6 h-6 text-primary" />
+              <Video className="w-5 h-5 text-primary" />
             ) : (
-              <VideoOff className="w-6 h-6 text-red-400" />
+              <VideoOff className="w-5 h-5 text-red-400" />
             )}
           </button>
 
           <button
-            onClick={handleLeave}
-            className="glass-panel p-4 rounded-full glass-panel-hover bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
+            onClick={toggleAI}
+            className={`p-3 rounded-full transition-all ${
+              isAIEnabled ? 'bg-gradient-gold-silver text-white' : 'glass-panel-hover'
+            }`}
           >
-            <PhoneOff className="w-6 h-6 text-red-400" />
+            {isAIEnabled ? <Bot className="w-5 h-5" /> : <BotOff className="w-5 h-5 text-primary" />}
+          </button>
+
+          <button
+            onClick={() => setShowInviteModal(true)}
+            className="p-3 rounded-full glass-panel-hover"
+          >
+            <Share2 className="w-5 h-5 text-primary" />
+          </button>
+
+          <button
+            onClick={handleLeave}
+            className="p-3 rounded-full bg-red-500/20 border-red-500/50 hover:bg-red-500/30"
+          >
+            <PhoneOff className="w-5 h-5 text-red-400" />
           </button>
         </div>
       </div>
+
+      {/* Floating AI Features - Top Right */}
+      {isAIEnabled && (
+        <div className="absolute top-6 right-6 z-50 flex space-x-2">
+          {transcript.length > 0 && (
+            <Button
+              onClick={() => setShowTranscript(!showTranscript)}
+              variant="secondary"
+              size="sm"
+              className="glass-panel"
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              Transcript ({transcript.length})
+            </Button>
+          )}
+          
+          {notes.length > 0 && (
+            <Button
+              onClick={() => setShowNotes(!showNotes)}
+              variant="secondary"
+              size="sm"
+              className="glass-panel"
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              Notes ({notes.length})
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* AI Status Indicator - Top Left */}
+      {isAIEnabled && (
+        <div className="absolute top-6 left-6 glass-panel px-3 py-2 rounded-lg z-40">
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${isTranscribing ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+            <span className="text-sm text-primary font-medium">
+              {isTranscribing ? 'AI Listening' : 'AI Ready'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Processing Indicator */}
+      {isProcessing && (
+        <div className="absolute top-6 left-1/2 transform -translate-x-1/2 glass-panel px-3 py-2 rounded-lg z-40">
+          <div className="flex items-center space-x-2">
+            <div className="w-4 h-4 border-2 border-gold-text border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-primary">Processing...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Transcript Panel */}
+      <AnimatePresence>
+        {showTranscript && (
+          <motion.div
+            initial={{ x: 400, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 400, opacity: 0 }}
+            className="absolute top-0 right-0 w-96 h-full glass-panel border-l silver-border flex flex-col z-30"
+          >
+            <div className="p-4 border-b silver-border">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-primary">Live Transcript</h3>
+                <div className="flex space-x-2">
+                  <Button
+                    onClick={downloadTranscript}
+                    variant="ghost"
+                    size="sm"
+                    disabled={transcript.length === 0}
+                  >
+                    <Download className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    onClick={() => setShowTranscript(false)}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    ×
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {transcript.map((entry) => (
+                <div key={entry.id} className="glass-panel p-3 rounded-lg">
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-medium text-primary text-sm">{entry.speaker}</span>
+                    <span className="text-xs text-secondary">
+                      {entry.timestamp.toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <p className="text-sm text-secondary">{entry.text}</p>
+                </div>
+              ))}
+              
+              {transcript.length === 0 && (
+                <div className="text-center text-secondary py-8">
+                  <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p>Transcript will appear here when AI is listening</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Notes Panel */}
+      <AnimatePresence>
+        {showNotes && (
+          <motion.div
+            initial={{ x: 400, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 400, opacity: 0 }}
+            className="absolute top-0 right-0 w-96 h-full glass-panel border-l silver-border flex flex-col z-30"
+          >
+            <div className="p-4 border-b silver-border">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-primary">AI Notes</h3>
+                <div className="flex space-x-2">
+                  <Button
+                    onClick={generateMeetingSummary}
+                    variant="ghost"
+                    size="sm"
+                    disabled={transcript.length === 0 || isProcessing}
+                  >
+                    <Bot className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    onClick={downloadNotes}
+                    variant="ghost"
+                    size="sm"
+                    disabled={notes.length === 0}
+                  >
+                    <Download className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    onClick={() => setShowNotes(false)}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    ×
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {/* Meeting Summary */}
+              {meetingSummary && (
+                <div className="glass-panel p-4 rounded-lg border-gold-border">
+                  <h4 className="font-bold text-primary mb-2 flex items-center">
+                    <Bot className="w-4 h-4 mr-2" />
+                    Meeting Summary
+                  </h4>
+                  <p className="text-sm text-secondary whitespace-pre-wrap">{meetingSummary}</p>
+                </div>
+              )}
+
+              {/* Auto Notes */}
+              {notes.map((note) => (
+                <div key={note.id} className="glass-panel p-3 rounded-lg">
+                  <div className="flex justify-between items-start mb-1">
+                    <span className={`text-xs px-2 py-1 rounded ${
+                      note.type === 'auto' ? 'bg-blue-500/20 text-blue-400' : 'bg-green-500/20 text-green-400'
+                    }`}>
+                      {note.type === 'auto' ? 'AI Generated' : 'Manual'}
+                    </span>
+                    <span className="text-xs text-secondary">
+                      {note.timestamp.toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <p className="text-sm text-secondary">{note.content}</p>
+                </div>
+              ))}
+              
+              {notes.length === 0 && (
+                <div className="text-center text-secondary py-8">
+                  <Bot className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p>AI will automatically take notes during the meeting</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Invite Others Modal */}
       <AnimatePresence>
