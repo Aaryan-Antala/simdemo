@@ -173,7 +173,7 @@ class Room {
     return peersInfo;
   }
 
-  // Get all producers in the room
+  // Get all producers in the room with peer mapping
   getAllProducers() {
     const producers = [];
     this.peers.forEach((peer, peerId) => {
@@ -190,9 +190,10 @@ class Room {
 
   // Notify all peers about a new producer
   notifyNewProducer(producerPeerId, producerId, kind) {
+    console.log(`[ROOM] Notifying all peers about new producer ${producerId} (${kind}) from ${producerPeerId}`);
     this.peers.forEach((peer, peerId) => {
-      if (peerId !== producerPeerId && peer.joined) {
-        console.log(`Notifying peer ${peerId} about new producer ${producerId} from ${producerPeerId}`);
+      if (peerId !== producerPeerId && peer.joined && peer.socket) {
+        console.log(`[ROOM] Sending newProducer to ${peerId}`);
         peer.socket.emit('newProducer', {
           peerId: producerPeerId,
           producerId: producerId,
@@ -263,6 +264,7 @@ io.on('connection', (socket) => {
       peer.transports.set(transport.id, transport);
 
       transport.on('dtlsstatechange', (dtlsState) => {
+        console.log(`Transport ${transport.id} dtlsState: ${dtlsState}`);
         if (dtlsState === 'closed') {
           transport.close();
           peer.transports.delete(transport.id);
@@ -322,11 +324,12 @@ io.on('connection', (socket) => {
         throw new Error('Transport not found');
       }
 
-      console.log(`Peer ${socket.id} producing ${kind}`);
+      console.log(`[PRODUCE] Peer ${socket.id} producing ${kind}`);
       const producer = await transport.produce({ kind, rtpParameters });
       peer.producers.set(producer.id, producer);
 
       producer.on('transportclose', () => {
+        console.log(`Producer ${producer.id} transport closed`);
         producer.close();
         peer.producers.delete(producer.id);
       });
@@ -334,7 +337,7 @@ io.on('connection', (socket) => {
       // Mark peer as joined when they start producing
       if (!peer.joined) {
         peer.joined = true;
-        console.log(`Peer ${socket.id} marked as joined`);
+        console.log(`[PRODUCE] Peer ${socket.id} marked as joined`);
         
         // Notify other peers about this peer joining
         room.broadcast('peerJoined', {
@@ -344,19 +347,21 @@ io.on('connection', (socket) => {
 
         // Send existing peers to new peer
         const existingPeers = room.getPeersInfo().filter(p => p.id !== socket.id);
-        socket.emit('existingPeers', existingPeers);
-        console.log(`Sent existing peers to ${socket.id}:`, existingPeers);
+        if (existingPeers.length > 0) {
+          socket.emit('existingPeers', existingPeers);
+          console.log(`[PRODUCE] Sent existing peers to ${socket.id}:`, existingPeers);
+        }
 
         // Send existing producers to new peer
         const existingProducers = room.getAllProducers().filter(p => p.peerId !== socket.id);
-        console.log(`[SERVER] existingProducers for ${socket.id}:`, existingProducers);
         if (existingProducers.length > 0) {
+          console.log(`[PRODUCE] Sending existing producers to ${socket.id}:`, existingProducers);
           socket.emit('existingProducers', existingProducers);
         }
       }
 
       // Notify other peers about new producer
-      console.log(`Broadcasting new producer ${producer.id} (${kind}) from ${socket.id}`);
+      console.log(`[PRODUCE] Broadcasting new producer ${producer.id} (${kind}) from ${socket.id}`);
       room.notifyNewProducer(socket.id, producer.id, producer.kind);
 
       socket.emit('produced', { id: producer.id });
@@ -383,12 +388,29 @@ io.on('connection', (socket) => {
       }
 
       if (!room.router.canConsume({ producerId, rtpCapabilities })) {
-        console.log(`Cannot consume producer ${producerId} for peer ${socket.id}`);
+        console.log(`[CONSUME] Cannot consume producer ${producerId} for peer ${socket.id}`);
         socket.emit('cannotConsume', { producerId });
         return;
       }
 
-      console.log(`[SERVER] consume request: peer=${socket.id} producerId=${producerId}`);
+      // Find the peer who owns this producer
+      let producerPeerId = null;
+      let producerKind = null;
+      room.peers.forEach((p, pid) => {
+        const producer = p.producers.get(producerId);
+        if (producer) {
+          producerPeerId = pid;
+          producerKind = producer.kind;
+        }
+      });
+
+      if (!producerPeerId) {
+        console.error(`[CONSUME] Producer ${producerId} not found in any peer`);
+        socket.emit('cannotConsume', { producerId });
+        return;
+      }
+
+      console.log(`[CONSUME] Creating consumer for producer ${producerId} (${producerKind}) from peer ${producerPeerId} to peer ${socket.id}`);
 
       const consumer = await transport.consume({
         producerId,
@@ -399,25 +421,19 @@ io.on('connection', (socket) => {
       peer.consumers.set(consumer.id, consumer);
 
       consumer.on('transportclose', () => {
+        console.log(`Consumer ${consumer.id} transport closed`);
         consumer.close();
         peer.consumers.delete(consumer.id);
       });
 
       consumer.on('producerclose', () => {
+        console.log(`Consumer ${consumer.id} producer closed`);
         consumer.close();
         peer.consumers.delete(consumer.id);
         socket.emit('consumerClosed', { consumerId: consumer.id });
       });
 
-      // Find the peer who owns this producer
-      let producerPeerId = null;
-      room.peers.forEach((p, pid) => {
-        if (p.producers.has(producerId)) {
-          producerPeerId = pid;
-        }
-      });
-
-      console.log(`[SERVER] sending consumed: consumerId=${consumer.id} producerId=${producerId} kind=${consumer.kind} to peer=${socket.id} from producer peer=${producerPeerId}`);
+      console.log(`[CONSUME] Sending consumed event: consumerId=${consumer.id} producerId=${producerId} kind=${consumer.kind} peerId=${producerPeerId} to peer=${socket.id}`);
 
       socket.emit('consumed', {
         id: consumer.id,
@@ -426,8 +442,6 @@ io.on('connection', (socket) => {
         rtpParameters: consumer.rtpParameters,
         peerId: producerPeerId
       });
-
-      console.log(`Consumer ${consumer.id} created for peer ${socket.id}`);
 
     } catch (error) {
       console.error('Error consuming:', error);
