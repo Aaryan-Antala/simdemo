@@ -26,7 +26,14 @@ app.use(express.json());
 
 const PORT = process.env.MEDIA_PORT || 3001;
 
-// Mediasoup configuration with proper network settings
+// Enhanced logging function
+function log(level, message, data = {}) {
+  const timestamp = new Date().toISOString();
+  const logMessage = `[${timestamp}] [${level.toUpperCase()}] ${message}`;
+  console.log(logMessage, Object.keys(data).length > 0 ? JSON.stringify(data, null, 2) : '');
+}
+
+// Mediasoup configuration with enhanced network settings
 const mediaCodecs = [
   {
     kind: 'audio',
@@ -80,12 +87,14 @@ let worker;
 const rooms = new Map();
 const peers = new Map();
 
-// Initialize mediasoup worker with proper settings
+// Initialize mediasoup worker with enhanced settings
 async function createWorker() {
+  log('info', '🚀 Creating mediasoup worker');
+  
   worker = await mediasoup.createWorker({
     rtcMinPort: 10000,
     rtcMaxPort: 10100,
-    logLevel: 'warn',
+    logLevel: 'debug', // Enhanced logging
     logTags: [
       'info',
       'ice',
@@ -93,31 +102,49 @@ async function createWorker() {
       'rtp',
       'srtp',
       'rtcp',
+      'rtx',
+      'bwe',
+      'score',
+      'simulcast',
+      'svc'
     ],
   });
 
-  console.log(`[WORKER] Mediasoup worker pid: ${worker.pid}`);
+  log('info', '✅ Mediasoup worker created', { 
+    pid: worker.pid,
+    rtcMinPort: 10000,
+    rtcMaxPort: 10100
+  });
 
   worker.on('died', (error) => {
-    console.error('[WORKER] Mediasoup worker has died:', error);
+    log('error', '💀 Mediasoup worker has died', { error: error.message, stack: error.stack });
     setTimeout(() => process.exit(1), 2000);
   });
 
   return worker;
 }
 
-// Room management
+// Enhanced Room management
 class Room {
   constructor(roomId) {
     this.id = roomId;
     this.peers = new Map();
     this.router = null;
     this.createdAt = new Date();
+    log('info', '🏠 Room created', { roomId });
   }
 
   async initialize() {
+    log('info', '🔧 Initializing room router', { roomId: this.id });
     this.router = await worker.createRouter({ mediaCodecs });
-    console.log(`[ROOM] Room ${this.id} initialized with router`);
+    log('info', '✅ Room router initialized', { 
+      roomId: this.id, 
+      routerId: this.router.id,
+      rtpCapabilities: {
+        codecsCount: this.router.rtpCapabilities.codecs.length,
+        headerExtensionsCount: this.router.rtpCapabilities.headerExtensions.length
+      }
+    });
   }
 
   addPeer(peerId, socket) {
@@ -133,16 +160,26 @@ class Room {
     
     this.peers.set(peerId, peer);
     peers.set(peerId, peer);
-    console.log(`[ROOM] Peer ${peerId} added to room ${this.id}`);
+    log('info', '👤 Peer added to room', { 
+      peerId, 
+      roomId: this.id,
+      totalPeers: this.peers.size
+    });
     return peer;
   }
 
   removePeer(peerId) {
     const peer = this.peers.get(peerId);
     if (peer) {
+      log('info', '👋 Removing peer from room', { peerId, roomId: this.id });
+      
       // Close all transports
       peer.transports.forEach(transport => {
-        console.log(`[ROOM] Closing transport ${transport.id} for peer ${peerId}`);
+        log('info', '🚛 Closing transport for peer', { 
+          peerId, 
+          transportId: transport.id,
+          direction: transport.appData?.direction || 'unknown'
+        });
         transport.close();
       });
       
@@ -150,26 +187,39 @@ class Room {
       this.peers.delete(peerId);
       peers.delete(peerId);
       
-      console.log(`[ROOM] Peer ${peerId} removed from room ${this.id}`);
+      log('info', '✅ Peer removed from room', { 
+        peerId, 
+        roomId: this.id,
+        remainingPeers: this.peers.size
+      });
       
       // Notify other peers
       this.broadcast('peerLeft', { peerId }, peerId);
       
       // Clean up room if empty
       if (this.peers.size === 0) {
-        console.log(`[ROOM] Closing router for empty room ${this.id}`);
+        log('info', '🧹 Closing router for empty room', { roomId: this.id });
         this.router.close();
         rooms.delete(this.id);
-        console.log(`[ROOM] Room ${this.id} closed - no peers remaining`);
+        log('info', '✅ Room closed - no peers remaining', { roomId: this.id });
       }
     }
   }
 
   broadcast(event, data, excludePeerId = null) {
+    let broadcastCount = 0;
     this.peers.forEach((peer, peerId) => {
       if (peerId !== excludePeerId && peer.socket) {
         peer.socket.emit(event, data);
+        broadcastCount++;
       }
+    });
+    log('info', '📢 Broadcasting event', { 
+      event, 
+      roomId: this.id, 
+      broadcastCount,
+      excludePeerId,
+      data: Object.keys(data)
     });
   }
 
@@ -182,6 +232,11 @@ class Room {
           displayName: peer.displayName
         });
       }
+    });
+    log('info', '👥 Getting peers info', { 
+      roomId: this.id, 
+      joinedPeers: peersInfo.length,
+      totalPeers: this.peers.size
     });
     return peersInfo;
   }
@@ -198,15 +253,32 @@ class Room {
         });
       });
     });
+    log('info', '🎬 Getting all producers', { 
+      roomId: this.id, 
+      producersCount: producers.length,
+      producers: producers.map(p => ({ peerId: p.peerId, kind: p.kind }))
+    });
     return producers;
   }
 
   // Notify all peers about a new producer
   notifyNewProducer(producerPeerId, producerId, kind) {
-    console.log(`[ROOM] Notifying all peers about new producer ${producerId} (${kind}) from ${producerPeerId}`);
+    log('info', '📢 Notifying peers about new producer', { 
+      roomId: this.id,
+      producerPeerId, 
+      producerId, 
+      kind,
+      targetPeers: Array.from(this.peers.keys()).filter(id => id !== producerPeerId)
+    });
+    
     this.peers.forEach((peer, peerId) => {
       if (peerId !== producerPeerId && peer.joined && peer.socket) {
-        console.log(`[ROOM] Sending newProducer to ${peerId}`);
+        log('info', '📤 Sending newProducer to peer', { 
+          targetPeerId: peerId,
+          producerPeerId,
+          producerId,
+          kind
+        });
         peer.socket.emit('newProducer', {
           peerId: producerPeerId,
           producerId: producerId,
@@ -217,14 +289,23 @@ class Room {
   }
 }
 
-// Socket.IO connection handling
+// Enhanced Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log(`[SOCKET] Socket connected: ${socket.id}`);
+  log('info', '🔌 Socket connected', { 
+    socketId: socket.id,
+    remoteAddress: socket.handshake.address,
+    userAgent: socket.handshake.headers['user-agent']
+  });
 
   socket.on('join-room', async (data) => {
     try {
       const { roomId, displayName } = data;
-      console.log(`[SOCKET] ${socket.id} joining room ${roomId} as ${displayName}`);
+      log('info', '🏠 Socket joining room', { 
+        socketId: socket.id, 
+        roomId, 
+        displayName,
+        existingRooms: rooms.size
+      });
 
       // Get or create room
       let room = rooms.get(roomId);
@@ -232,6 +313,9 @@ io.on('connection', (socket) => {
         room = new Room(roomId);
         await room.initialize();
         rooms.set(roomId, room);
+        log('info', '🆕 New room created and initialized', { roomId });
+      } else {
+        log('info', '🔄 Using existing room', { roomId, existingPeers: room.peers.size });
       }
 
       // Add peer to room
@@ -242,10 +326,18 @@ io.on('connection', (socket) => {
       socket.roomId = roomId;
 
       // Send router RTP capabilities
+      log('info', '📡 Sending router RTP capabilities', { 
+        socketId: socket.id,
+        codecsCount: room.router.rtpCapabilities.codecs.length
+      });
       socket.emit('routerRtpCapabilities', room.router.rtpCapabilities);
 
     } catch (error) {
-      console.error('[SOCKET] Error joining room:', error);
+      log('error', '🔥 Error joining room', { 
+        socketId: socket.id, 
+        error: error.message, 
+        stack: error.stack 
+      });
       socket.emit('error', { message: 'Failed to join room' });
     }
   });
@@ -260,10 +352,14 @@ io.on('connection', (socket) => {
         throw new Error('Room or peer not found');
       }
 
-      console.log(`[TRANSPORT] Creating ${direction} transport for peer ${socket.id}`);
+      log('info', '🚛 Creating WebRTC transport', { 
+        socketId: socket.id, 
+        direction,
+        roomId: socket.roomId
+      });
 
       // Enhanced transport configuration for better connectivity
-      const transport = await room.router.createWebRtcTransport({
+      const transportOptions = {
         listenIps: [
           {
             ip: '0.0.0.0',
@@ -276,16 +372,30 @@ io.on('connection', (socket) => {
         initialAvailableOutgoingBitrate: 1000000,
         minimumAvailableOutgoingBitrate: 600000,
         maxSctpMessageSize: 262144,
-        // Additional DTLS settings for better connectivity
         enableSctp: true,
         numSctpStreams: { OS: 1024, MIS: 1024 },
         maxIncomingBitrate: 1500000,
+        appData: { direction, peerId: socket.id }
+      };
+
+      log('info', '🔧 Transport configuration', { 
+        direction,
+        announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
+        enableUdp: transportOptions.enableUdp,
+        enableTcp: transportOptions.enableTcp
       });
+
+      const transport = await room.router.createWebRtcTransport(transportOptions);
 
       peer.transports.set(transport.id, transport);
 
       transport.on('dtlsstatechange', (dtlsState) => {
-        console.log(`[TRANSPORT] Transport ${transport.id} dtlsState: ${dtlsState}`);
+        log('info', '🔐 Transport DTLS state change', { 
+          transportId: transport.id, 
+          dtlsState,
+          direction,
+          peerId: socket.id
+        });
         if (dtlsState === 'closed') {
           transport.close();
           peer.transports.delete(transport.id);
@@ -293,23 +403,58 @@ io.on('connection', (socket) => {
       });
 
       transport.on('icestatechange', (iceState) => {
-        console.log(`[TRANSPORT] Transport ${transport.id} iceState: ${iceState}`);
+        log('info', '🧊 Transport ICE state change', { 
+          transportId: transport.id, 
+          iceState,
+          direction,
+          peerId: socket.id
+        });
       });
 
       transport.on('iceselectedtuplechange', (iceSelectedTuple) => {
-        console.log(`[TRANSPORT] Transport ${transport.id} iceSelectedTuple:`, iceSelectedTuple);
+        log('info', '🎯 Transport ICE selected tuple change', { 
+          transportId: transport.id,
+          iceSelectedTuple,
+          direction,
+          peerId: socket.id
+        });
       });
 
-      socket.emit('webRtcTransportCreated', {
+      transport.on('sctpstatechange', (sctpState) => {
+        log('info', '📡 Transport SCTP state change', { 
+          transportId: transport.id, 
+          sctpState,
+          direction,
+          peerId: socket.id
+        });
+      });
+
+      const transportInfo = {
         id: transport.id,
         iceParameters: transport.iceParameters,
         iceCandidates: transport.iceCandidates,
         dtlsParameters: transport.dtlsParameters,
         direction: direction
+      };
+
+      log('info', '✅ WebRTC transport created successfully', { 
+        transportId: transport.id,
+        direction,
+        peerId: socket.id,
+        iceParametersFragment: transport.iceParameters.usernameFragment,
+        iceCandidatesCount: transport.iceCandidates.length,
+        dtlsRole: transport.dtlsParameters.role
       });
 
+      socket.emit('webRtcTransportCreated', transportInfo);
+
     } catch (error) {
-      console.error('[TRANSPORT] Error creating WebRTC transport:', error);
+      log('error', '🔥 Error creating WebRTC transport', { 
+        socketId: socket.id, 
+        direction: data.direction,
+        error: error.message, 
+        stack: error.stack 
+      });
       socket.emit('error', { message: 'Failed to create transport' });
     }
   });
@@ -328,13 +473,31 @@ io.on('connection', (socket) => {
         throw new Error('Transport not found');
       }
 
-      console.log(`[TRANSPORT] Connecting transport ${transportId} for peer ${socket.id}`);
+      log('info', '🔗 Connecting transport', { 
+        socketId: socket.id, 
+        transportId,
+        dtlsRole: dtlsParameters.role,
+        fingerprintsCount: dtlsParameters.fingerprints?.length
+      });
+
       await transport.connect({ dtlsParameters });
-      console.log(`[TRANSPORT] Transport ${transportId} connected for peer ${socket.id}`);
+      
+      log('info', '✅ Transport connected successfully', { 
+        socketId: socket.id, 
+        transportId,
+        dtlsState: transport.dtlsState,
+        iceState: transport.iceState
+      });
+      
       socket.emit('transportConnected', { transportId });
 
     } catch (error) {
-      console.error('[TRANSPORT] Error connecting transport:', error);
+      log('error', '🔥 Error connecting transport', { 
+        socketId: socket.id, 
+        transportId: data.transportId,
+        error: error.message, 
+        stack: error.stack 
+      });
       socket.emit('error', { message: 'Failed to connect transport' });
     }
   });
@@ -354,20 +517,43 @@ io.on('connection', (socket) => {
         throw new Error('Transport not found');
       }
 
-      console.log(`[PRODUCE] Peer ${socket.id} producing ${kind}`);
+      log('info', '🎬 Producing media', { 
+        socketId: socket.id, 
+        kind,
+        transportId,
+        codecsCount: rtpParameters.codecs?.length,
+        encodingsCount: rtpParameters.encodings?.length
+      });
+
       const producer = await transport.produce({ kind, rtpParameters });
       peer.producers.set(producer.id, producer);
 
       producer.on('transportclose', () => {
-        console.log(`[PRODUCE] Producer ${producer.id} transport closed`);
+        log('info', '🛑 Producer transport closed', { 
+          producerId: producer.id, 
+          kind,
+          peerId: socket.id
+        });
         producer.close();
         peer.producers.delete(producer.id);
+      });
+
+      producer.on('score', (score) => {
+        log('info', '📊 Producer score', { 
+          producerId: producer.id, 
+          kind,
+          score,
+          peerId: socket.id
+        });
       });
 
       // Mark peer as joined when they start producing
       if (!peer.joined) {
         peer.joined = true;
-        console.log(`[PRODUCE] Peer ${socket.id} marked as joined`);
+        log('info', '✅ Peer marked as joined', { 
+          peerId: socket.id,
+          displayName: peer.displayName
+        });
         
         // Notify other peers about this peer joining
         room.broadcast('peerJoined', {
@@ -379,25 +565,42 @@ io.on('connection', (socket) => {
         const existingPeers = room.getPeersInfo().filter(p => p.id !== socket.id);
         if (existingPeers.length > 0) {
           socket.emit('existingPeers', existingPeers);
-          console.log(`[PRODUCE] Sent existing peers to ${socket.id}:`, existingPeers);
+          log('info', '👥 Sent existing peers to new peer', { 
+            newPeerId: socket.id,
+            existingPeers: existingPeers.map(p => p.id)
+          });
         }
 
         // Send existing producers to new peer
         const existingProducers = room.getAllProducers().filter(p => p.peerId !== socket.id);
         if (existingProducers.length > 0) {
-          console.log(`[PRODUCE] Sending existing producers to ${socket.id}:`, existingProducers);
+          log('info', '🎬 Sending existing producers to new peer', { 
+            newPeerId: socket.id,
+            existingProducers: existingProducers.map(p => ({ peerId: p.peerId, kind: p.kind }))
+          });
           socket.emit('existingProducers', existingProducers);
         }
       }
 
       // Notify other peers about new producer
-      console.log(`[PRODUCE] Broadcasting new producer ${producer.id} (${kind}) from ${socket.id}`);
       room.notifyNewProducer(socket.id, producer.id, producer.kind);
+
+      log('info', '✅ Media produced successfully', { 
+        producerId: producer.id, 
+        kind,
+        peerId: socket.id,
+        rtpStreamParams: producer.rtpParameters?.encodings?.length
+      });
 
       socket.emit('produced', { id: producer.id });
 
     } catch (error) {
-      console.error('[PRODUCE] Error producing:', error);
+      log('error', '🔥 Error producing media', { 
+        socketId: socket.id, 
+        kind: data.kind,
+        error: error.message, 
+        stack: error.stack 
+      });
       socket.emit('error', { message: 'Failed to produce' });
     }
   });
@@ -417,8 +620,19 @@ io.on('connection', (socket) => {
         throw new Error('Transport not found');
       }
 
+      log('info', '🍽️ Checking if can consume', { 
+        socketId: socket.id, 
+        producerId,
+        transportId,
+        codecsCount: rtpCapabilities.codecs?.length
+      });
+
       if (!room.router.canConsume({ producerId, rtpCapabilities })) {
-        console.log(`[CONSUME] Cannot consume producer ${producerId} for peer ${socket.id}`);
+        log('warn', '❌ Cannot consume producer', { 
+          socketId: socket.id, 
+          producerId,
+          reason: 'Router cannot consume with provided RTP capabilities'
+        });
         socket.emit('cannotConsume', { producerId });
         return;
       }
@@ -435,12 +649,21 @@ io.on('connection', (socket) => {
       });
 
       if (!producerPeerId) {
-        console.error(`[CONSUME] Producer ${producerId} not found in any peer`);
+        log('error', '🔥 Producer not found in any peer', { 
+          socketId: socket.id, 
+          producerId 
+        });
         socket.emit('cannotConsume', { producerId });
         return;
       }
 
-      console.log(`[CONSUME] Creating consumer for producer ${producerId} (${producerKind}) from peer ${producerPeerId} to peer ${socket.id}`);
+      log('info', '🍽️ Creating consumer', { 
+        socketId: socket.id,
+        producerId, 
+        producerKind, 
+        producerPeerId,
+        transportId
+      });
 
       const consumer = await transport.consume({
         producerId,
@@ -451,30 +674,61 @@ io.on('connection', (socket) => {
       peer.consumers.set(consumer.id, consumer);
 
       consumer.on('transportclose', () => {
-        console.log(`[CONSUME] Consumer ${consumer.id} transport closed`);
+        log('info', '🛑 Consumer transport closed', { 
+          consumerId: consumer.id, 
+          producerId,
+          peerId: socket.id
+        });
         consumer.close();
         peer.consumers.delete(consumer.id);
       });
 
       consumer.on('producerclose', () => {
-        console.log(`[CONSUME] Consumer ${consumer.id} producer closed`);
+        log('info', '🛑 Consumer producer closed', { 
+          consumerId: consumer.id, 
+          producerId,
+          peerId: socket.id
+        });
         consumer.close();
         peer.consumers.delete(consumer.id);
         socket.emit('consumerClosed', { consumerId: consumer.id });
       });
 
-      console.log(`[CONSUME] Sending consumed event: consumerId=${consumer.id} producerId=${producerId} kind=${consumer.kind} peerId=${producerPeerId} to peer=${socket.id}`);
+      consumer.on('score', (score) => {
+        log('info', '📊 Consumer score', { 
+          consumerId: consumer.id, 
+          score,
+          peerId: socket.id
+        });
+      });
 
-      socket.emit('consumed', {
+      const consumerInfo = {
         id: consumer.id,
         producerId: producerId,
         kind: consumer.kind,
         rtpParameters: consumer.rtpParameters,
         peerId: producerPeerId
+      };
+
+      log('info', '✅ Consumer created successfully', { 
+        consumerId: consumer.id,
+        producerId,
+        kind: consumer.kind,
+        peerId: socket.id,
+        producerPeerId,
+        paused: consumer.paused,
+        rtpParametersCount: consumer.rtpParameters?.encodings?.length
       });
 
+      socket.emit('consumed', consumerInfo);
+
     } catch (error) {
-      console.error('[CONSUME] Error consuming:', error);
+      log('error', '🔥 Error consuming media', { 
+        socketId: socket.id, 
+        producerId: data.producerId,
+        error: error.message, 
+        stack: error.stack 
+      });
       socket.emit('error', { message: 'Failed to consume' });
     }
   });
@@ -493,12 +747,31 @@ io.on('connection', (socket) => {
         throw new Error('Consumer not found');
       }
 
+      log('info', '▶️ Resuming consumer', { 
+        socketId: socket.id, 
+        consumerId,
+        kind: consumer.kind,
+        paused: consumer.paused
+      });
+
       await consumer.resume();
-      console.log(`[CONSUME] Consumer ${consumerId} resumed for peer ${socket.id}`);
+      
+      log('info', '✅ Consumer resumed successfully', { 
+        socketId: socket.id, 
+        consumerId,
+        kind: consumer.kind,
+        paused: consumer.paused
+      });
+      
       socket.emit('consumerResumed', { consumerId });
 
     } catch (error) {
-      console.error('[CONSUME] Error resuming consumer:', error);
+      log('error', '🔥 Error resuming consumer', { 
+        socketId: socket.id, 
+        consumerId: data.consumerId,
+        error: error.message, 
+        stack: error.stack 
+      });
       socket.emit('error', { message: 'Failed to resume consumer' });
     }
   });
@@ -511,33 +784,61 @@ io.on('connection', (socket) => {
       }
 
       const producers = room.getAllProducers().filter(p => p.peerId !== socket.id);
-      console.log(`[SOCKET] Sending producers to ${socket.id}:`, producers);
+      log('info', '📋 Sending producers list', { 
+        socketId: socket.id,
+        producersCount: producers.length,
+        producers: producers.map(p => ({ peerId: p.peerId, kind: p.kind }))
+      });
       socket.emit('producers', producers);
 
     } catch (error) {
-      console.error('[SOCKET] Error getting producers:', error);
+      log('error', '🔥 Error getting producers', { 
+        socketId: socket.id, 
+        error: error.message 
+      });
       socket.emit('error', { message: 'Failed to get producers' });
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log(`[SOCKET] Socket disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    log('info', '🔌 Socket disconnected', { 
+      socketId: socket.id, 
+      reason,
+      roomId: socket.roomId
+    });
     
     const room = rooms.get(socket.roomId);
     if (room) {
       room.removePeer(socket.id);
     }
   });
+
+  socket.on('error', (error) => {
+    log('error', '🔥 Socket error', { 
+      socketId: socket.id, 
+      error: error.message,
+      stack: error.stack
+    });
+  });
 });
 
-// REST API endpoints
+// Enhanced REST API endpoints
 app.get('/api/media/health', (req, res) => {
-  res.json({
+  const healthInfo = {
     status: 'healthy',
     rooms: rooms.size,
     peers: peers.size,
-    worker: worker ? 'running' : 'not initialized'
-  });
+    worker: worker ? 'running' : 'not initialized',
+    timestamp: new Date().toISOString(),
+    environment: {
+      announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
+      port: PORT,
+      nodeVersion: process.version
+    }
+  };
+  
+  log('info', '🏥 Health check requested', healthInfo);
+  res.json(healthInfo);
 });
 
 app.get('/api/media/rooms', (req, res) => {
@@ -546,28 +847,93 @@ app.get('/api/media/rooms', (req, res) => {
     roomList.push({
       id: roomId,
       peers: room.peers.size,
-      createdAt: room.createdAt
+      createdAt: room.createdAt,
+      producers: room.getAllProducers().length
     });
   });
+  
+  log('info', '🏠 Rooms list requested', { roomsCount: roomList.length });
   res.json({ rooms: roomList });
+});
+
+app.get('/api/media/debug', (req, res) => {
+  const debugInfo = {
+    worker: {
+      pid: worker?.pid,
+      died: worker?.closed
+    },
+    rooms: Array.from(rooms.entries()).map(([id, room]) => ({
+      id,
+      peers: room.peers.size,
+      router: room.router?.id,
+      producers: room.getAllProducers().length
+    })),
+    peers: Array.from(peers.entries()).map(([id, peer]) => ({
+      id,
+      displayName: peer.displayName,
+      transports: peer.transports.size,
+      producers: peer.producers.size,
+      consumers: peer.consumers.size,
+      joined: peer.joined
+    })),
+    environment: {
+      MEDIASOUP_ANNOUNCED_IP: process.env.MEDIASOUP_ANNOUNCED_IP,
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: PORT
+    }
+  };
+  
+  log('info', '🐛 Debug info requested', { 
+    roomsCount: debugInfo.rooms.length,
+    peersCount: debugInfo.peers.length
+  });
+  res.json(debugInfo);
 });
 
 // Initialize and start server
 async function startServer() {
   try {
+    log('info', '🚀 Starting mediasoup server', { 
+      port: PORT,
+      announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1',
+      environment: process.env.NODE_ENV || 'development'
+    });
+    
     await createWorker();
     
     server.listen(PORT, () => {
-      console.log(`[SERVER] Mediasoup server running on http://localhost:${PORT}`);
-      console.log(`[SERVER] Health check: http://localhost:${PORT}/api/media/health`);
-      console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`[SERVER] Announced IP: ${process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1'}`);
+      log('info', '✅ Mediasoup server started successfully', {
+        port: PORT,
+        healthEndpoint: `http://localhost:${PORT}/api/media/health`,
+        debugEndpoint: `http://localhost:${PORT}/api/media/debug`,
+        announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || '127.0.0.1'
+      });
     });
   } catch (error) {
-    console.error('[SERVER] Failed to start mediasoup server:', error);
+    log('error', '💀 Failed to start mediasoup server', { 
+      error: error.message, 
+      stack: error.stack 
+    });
     process.exit(1);
   }
 }
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  log('info', '🛑 Received SIGINT, shutting down gracefully');
+  if (worker) {
+    worker.close();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  log('info', '🛑 Received SIGTERM, shutting down gracefully');
+  if (worker) {
+    worker.close();
+  }
+  process.exit(0);
+});
 
 startServer();
 

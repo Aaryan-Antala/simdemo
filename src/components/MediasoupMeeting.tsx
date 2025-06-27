@@ -70,6 +70,15 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [consumers, setConsumers] = useState<Map<string, any>>(new Map());
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [copied, setCopied] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+  // Enhanced logging function
+  const addDebugLog = useCallback((message: string, data?: any) => {
+    const timestamp = new Date().toISOString();
+    const logMessage = `[${timestamp}] ${message}`;
+    console.log(logMessage, data || '');
+    setDebugLogs(prev => [...prev.slice(-50), logMessage]); // Keep last 50 logs
+  }, []);
 
   // Calculate grid layout based on participant count
   const getGridLayout = useCallback((participantCount: number) => {
@@ -93,27 +102,29 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
   // Initialize socket connection
   useEffect(() => {
-    console.log('[CLIENT] Initializing Mediasoup meeting...');
+    addDebugLog('🚀 Initializing Mediasoup meeting', { roomName, displayName, mediaApiUrl: VITE_MEDIA_API_URL });
     setConnectionStatus('Connecting to server...');
     
     socketRef.current = io(`${VITE_MEDIA_API_URL}`, {
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+      forceNew: true
     });
     
     socketRef.current.on('connect', () => {
-      console.log('[CLIENT] Connected to mediasoup server');
+      addDebugLog('✅ Connected to mediasoup server', { socketId: socketRef.current.id });
       setConnectionStatus('Joining room...');
       joinRoom();
     });
 
-    socketRef.current.on('disconnect', () => {
-      console.log('[CLIENT] Disconnected from mediasoup server');
+    socketRef.current.on('disconnect', (reason: string) => {
+      addDebugLog('❌ Disconnected from mediasoup server', { reason });
       setConnectionStatus('Disconnected');
       setIsConnected(false);
     });
 
     socketRef.current.on('connect_error', (error: any) => {
-      console.error('[CLIENT] Connection error:', error);
+      addDebugLog('🔥 Connection error', { error: error.message, stack: error.stack });
       setConnectionStatus('Connection failed');
     });
 
@@ -135,70 +146,23 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     socketRef.current.on('error', handleError);
 
     return () => {
-      console.log('[CLIENT] Cleaning up Mediasoup meeting...');
+      addDebugLog('🧹 Cleaning up Mediasoup meeting');
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
       if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+        localStream.getTracks().forEach(track => {
+          addDebugLog('🛑 Stopping local track', { kind: track.kind, id: track.id });
+          track.stop();
+        });
       }
-      // Clean up video and audio elements
       videoElementsRef.current.clear();
       audioElementsRef.current.clear();
     };
-  }, [roomName, displayName]);
-
-  // Initialize Speech Recognition
-  useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
-
-      recognitionRef.current.onresult = (event: any) => {
-        const results = Array.from(event.results);
-        const finalTranscript = results
-          .filter((result: any) => result.isFinal)
-          .map((result: any) => result[0].transcript)
-          .join(' ');
-
-        if (finalTranscript.trim()) {
-          const newEntry: TranscriptEntry = {
-            id: Date.now().toString(),
-            speaker: displayName || 'You',
-            text: finalTranscript.trim(),
-            timestamp: new Date()
-          };
-          
-          setTranscript(prev => [...prev, newEntry]);
-          
-          // Auto-generate notes for significant content
-          if (finalTranscript.length > 30) {
-            generateAutoNotes(finalTranscript, displayName || 'You');
-          }
-        }
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('[CLIENT] Speech recognition error:', event.error);
-      };
-
-      recognitionRef.current.onend = () => {
-        if (isTranscribing && isAIEnabled) {
-          setTimeout(() => {
-            if (recognitionRef.current && isTranscribing) {
-              recognitionRef.current.start();
-            }
-          }, 1000);
-        }
-      };
-    }
-  }, [displayName, isTranscribing, isAIEnabled]);
+  }, [roomName, displayName, addDebugLog]);
 
   const joinRoom = () => {
-    console.log(`[CLIENT] Joining room: ${roomName} as ${displayName}`);
+    addDebugLog('🏠 Joining room', { roomName, displayName });
     socketRef.current.emit('join-room', {
       roomId: roomName,
       displayName: displayName
@@ -207,39 +171,56 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
   const handleRouterRtpCapabilities = async (rtpCapabilities: any) => {
     try {
-      console.log('[CLIENT] Received router RTP capabilities');
+      addDebugLog('📡 Received router RTP capabilities', { 
+        codecsCount: rtpCapabilities.codecs?.length,
+        headerExtensionsCount: rtpCapabilities.headerExtensions?.length 
+      });
       setConnectionStatus('Initializing device...');
       
       deviceRef.current = new Device();
       await deviceRef.current.load({ routerRtpCapabilities: rtpCapabilities });
-      console.log('[CLIENT] Device loaded successfully');
+      addDebugLog('✅ Device loaded successfully', { 
+        canProduce: {
+          audio: deviceRef.current.canProduce('audio'),
+          video: deviceRef.current.canProduce('video')
+        },
+        rtpCapabilities: deviceRef.current.rtpCapabilities
+      });
       
       setConnectionStatus('Creating transports...');
       await createTransports();
       
-    } catch (error) {
-      console.error('[CLIENT] Error handling router RTP capabilities:', error);
+    } catch (error: any) {
+      addDebugLog('🔥 Error handling router RTP capabilities', { error: error.message, stack: error.stack });
       setConnectionStatus('Failed to initialize device');
     }
   };
 
   const createTransports = async () => {
-    console.log('[CLIENT] Creating WebRTC transports...');
+    addDebugLog('🚛 Creating WebRTC transports');
     
     // Create send transport
+    addDebugLog('📤 Requesting send transport creation');
     socketRef.current.emit('createWebRtcTransport', { direction: 'send' });
     
     // Create receive transport
+    addDebugLog('📥 Requesting receive transport creation');
     socketRef.current.emit('createWebRtcTransport', { direction: 'recv' });
   };
 
   const handleTransportCreated = async (data: any) => {
     const { id, iceParameters, iceCandidates, dtlsParameters, direction } = data;
-    console.log(`[CLIENT] Transport created: ${id} (${direction})`);
+    addDebugLog(`🚛 Transport created: ${direction}`, { 
+      id, 
+      iceParametersCount: iceParameters?.usernameFragment ? 1 : 0,
+      iceCandidatesCount: iceCandidates?.length,
+      dtlsRole: dtlsParameters?.role,
+      dtlsFingerprints: dtlsParameters?.fingerprints?.length
+    });
     
     try {
       if (direction === 'send' && !sendTransportRef.current) {
-        console.log('[CLIENT] Creating send transport');
+        addDebugLog('📤 Creating send transport on client');
         sendTransportRef.current = deviceRef.current!.createSendTransport({
           id,
           iceParameters,
@@ -249,15 +230,20 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
         sendTransportRef.current.on('connect', async ({ dtlsParameters }: any, callback: any, errback: any) => {
           try {
-            console.log('[CLIENT] Connecting send transport');
+            addDebugLog('🔗 Send transport connecting', { transportId: id, dtlsRole: dtlsParameters.role });
             socketRef.current.emit('connectTransport', {
               transportId: id,
               dtlsParameters,
             });
             
-            const connectPromise = new Promise((resolve) => {
+            const connectPromise = new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                reject(new Error('Transport connect timeout'));
+              }, 10000);
+              
               const handler = (data: any) => {
                 if (data.transportId === id) {
+                  clearTimeout(timeout);
                   socketRef.current.off('transportConnected', handler);
                   resolve(data);
                 }
@@ -266,36 +252,59 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             });
             
             await connectPromise;
+            addDebugLog('✅ Send transport connected successfully');
             callback();
-          } catch (error) {
-            console.error('[CLIENT] Send transport connect error:', error);
+          } catch (error: any) {
+            addDebugLog('🔥 Send transport connect error', { error: error.message });
             errback(error);
           }
         });
 
         sendTransportRef.current.on('produce', async (parameters: any, callback: any, errback: any) => {
           try {
-            console.log('[CLIENT] Producing:', parameters.kind);
+            addDebugLog('🎬 Producing media', { 
+              kind: parameters.kind,
+              codecOptions: parameters.codecOptions,
+              rtpParameters: {
+                codecs: parameters.rtpParameters.codecs?.length,
+                encodings: parameters.rtpParameters.encodings?.length
+              }
+            });
+            
             socketRef.current.emit('produce', {
               transportId: id,
               kind: parameters.kind,
               rtpParameters: parameters.rtpParameters,
             });
             
-            const producePromise = new Promise((resolve) => {
-              socketRef.current.once('produced', resolve);
+            const producePromise = new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                reject(new Error('Produce timeout'));
+              }, 10000);
+              
+              const handler = (data: any) => {
+                clearTimeout(timeout);
+                socketRef.current.off('produced', handler);
+                resolve(data);
+              };
+              socketRef.current.on('produced', handler);
             });
             
-            const data: any = await producePromise;
-            callback({ id: data.id });
-          } catch (error) {
-            console.error('[CLIENT] Produce error:', error);
+            const result: any = await producePromise;
+            addDebugLog('✅ Media produced successfully', { producerId: result.id, kind: parameters.kind });
+            callback({ id: result.id });
+          } catch (error: any) {
+            addDebugLog('🔥 Produce error', { error: error.message, kind: parameters.kind });
             errback(error);
           }
         });
 
         sendTransportRef.current.on('connectionstatechange', (state: string) => {
-          console.log('[CLIENT] Send transport connection state:', state);
+          addDebugLog(`📤 Send transport connection state: ${state}`);
+        });
+
+        sendTransportRef.current.on('icestatechange', (state: string) => {
+          addDebugLog(`📤 Send transport ICE state: ${state}`);
         });
 
         if (recvTransportRef.current) {
@@ -303,7 +312,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         }
 
       } else if (direction === 'recv' && !recvTransportRef.current) {
-        console.log('[CLIENT] Creating receive transport');
+        addDebugLog('📥 Creating receive transport on client');
         recvTransportRef.current = deviceRef.current!.createRecvTransport({
           id,
           iceParameters,
@@ -313,15 +322,20 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
         recvTransportRef.current.on('connect', async ({ dtlsParameters }: any, callback: any, errback: any) => {
           try {
-            console.log('[CLIENT] Connecting receive transport');
+            addDebugLog('🔗 Receive transport connecting', { transportId: id, dtlsRole: dtlsParameters.role });
             socketRef.current.emit('connectTransport', {
               transportId: id,
               dtlsParameters,
             });
             
-            const connectPromise = new Promise((resolve) => {
+            const connectPromise = new Promise((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                reject(new Error('Transport connect timeout'));
+              }, 10000);
+              
               const handler = (data: any) => {
                 if (data.transportId === id) {
+                  clearTimeout(timeout);
                   socketRef.current.off('transportConnected', handler);
                   resolve(data);
                 }
@@ -330,23 +344,42 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             });
             
             await connectPromise;
+            addDebugLog('✅ Receive transport connected successfully');
             callback();
-          } catch (error) {
-            console.error('[CLIENT] Receive transport connect error:', error);
+          } catch (error: any) {
+            addDebugLog('🔥 Receive transport connect error', { error: error.message });
             errback(error);
           }
         });
 
         recvTransportRef.current.on('connectionstatechange', (state: string) => {
-          console.log('[CLIENT] Receive transport connection state:', state);
+          addDebugLog(`📥 Receive transport connection state: ${state}`);
+          if (state === 'failed') {
+            addDebugLog('🔥 CRITICAL: Receive transport failed - checking network connectivity');
+            // Log additional debugging info
+            addDebugLog('🔍 Network debug info', {
+              userAgent: navigator.userAgent,
+              connection: (navigator as any).connection,
+              onLine: navigator.onLine,
+              mediaApiUrl: VITE_MEDIA_API_URL
+            });
+          }
+        });
+
+        recvTransportRef.current.on('icestatechange', (state: string) => {
+          addDebugLog(`📥 Receive transport ICE state: ${state}`);
+        });
+
+        recvTransportRef.current.on('iceselectedtuplechange', (iceSelectedTuple: any) => {
+          addDebugLog('📥 Receive transport ICE selected tuple changed', { iceSelectedTuple });
         });
 
         if (sendTransportRef.current) {
           await startProducing();
         }
       }
-    } catch (error) {
-      console.error('[CLIENT] Error creating transport:', error);
+    } catch (error: any) {
+      addDebugLog('🔥 Error creating transport', { error: error.message, direction, stack: error.stack });
       setConnectionStatus('Failed to create transport');
     }
   };
@@ -354,87 +387,142 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const startProducing = async () => {
     try {
       setConnectionStatus('Getting user media...');
-      console.log('[CLIENT] Getting user media...');
+      addDebugLog('🎥 Getting user media');
       
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const constraints = {
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 60 }
         },
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          sampleRate: 48000
         },
+      };
+      
+      addDebugLog('🎥 Requesting media with constraints', constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      addDebugLog('✅ Got user media stream', { 
+        streamId: stream.id,
+        tracks: stream.getTracks().map(track => ({
+          kind: track.kind,
+          id: track.id,
+          enabled: track.enabled,
+          readyState: track.readyState,
+          settings: track.getSettings()
+        }))
       });
       
-      console.log('[CLIENT] Got user media stream');
-      
-      // Set local stream state first
       setLocalStream(stream);
 
-      // Attach local stream to video element immediately
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.muted = true;
-        localVideoRef.current.autoplay = true;
-        localVideoRef.current.playsInline = true;
-        try {
-          await localVideoRef.current.play();
-        } catch (error) {
-          console.warn('[CLIENT] Local video play failed:', error);
-        }
-      }
-
-      // Produce audio and video
       const audioTrack = stream.getAudioTracks()[0];
       const videoTrack = stream.getVideoTracks()[0];
 
       if (audioTrack && sendTransportRef.current) {
-        console.log('[CLIENT] Producing audio track');
+        addDebugLog('🎵 Producing audio track', { 
+          trackId: audioTrack.id,
+          settings: audioTrack.getSettings(),
+          constraints: audioTrack.getConstraints()
+        });
         const audioProducer = await sendTransportRef.current.produce({ track: audioTrack });
         setProducers(prev => new Map(prev.set('audio', audioProducer)));
         
         audioProducer.on('trackended', () => {
-          console.log('[CLIENT] Audio track ended');
+          addDebugLog('🛑 Audio track ended');
+        });
+
+        audioProducer.on('transportclose', () => {
+          addDebugLog('🛑 Audio producer transport closed');
         });
       }
 
       if (videoTrack && sendTransportRef.current) {
-        console.log('[CLIENT] Producing video track');
+        addDebugLog('📹 Producing video track', { 
+          trackId: videoTrack.id,
+          settings: videoTrack.getSettings(),
+          constraints: videoTrack.getConstraints()
+        });
         const videoProducer = await sendTransportRef.current.produce({ track: videoTrack });
         setProducers(prev => new Map(prev.set('video', videoProducer)));
         
         videoProducer.on('trackended', () => {
-          console.log('[CLIENT] Video track ended');
+          addDebugLog('🛑 Video track ended');
+        });
+
+        videoProducer.on('transportclose', () => {
+          addDebugLog('🛑 Video producer transport closed');
         });
       }
 
       setConnectionStatus('Connected');
       setIsConnected(true);
+      addDebugLog('🎉 Successfully connected and producing media');
 
-    } catch (error) {
-      console.error('[CLIENT] Error starting production:', error);
+    } catch (error: any) {
+      addDebugLog('🔥 Error starting production', { error: error.message, stack: error.stack });
       setConnectionStatus('Media access denied');
     }
   };
 
+  // Effect to handle local video stream attachment
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      addDebugLog('📺 Attaching local stream to video element', { 
+        streamId: localStream.id,
+        videoElement: !!localVideoRef.current
+      });
+      const videoElement = localVideoRef.current;
+      
+      videoElement.srcObject = localStream;
+      videoElement.muted = true;
+      videoElement.autoplay = true;
+      videoElement.playsInline = true;
+      
+      const playPromise = videoElement.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            addDebugLog('✅ Local video playing successfully', {
+              videoWidth: videoElement.videoWidth,
+              videoHeight: videoElement.videoHeight,
+              duration: videoElement.duration
+            });
+          })
+          .catch(error => {
+            addDebugLog('🔥 Local video play failed', { error: error.message });
+          });
+      }
+    }
+  }, [localStream, addDebugLog]);
+
   const handleTransportConnected = (data: any) => {
-    console.log('[CLIENT] Transport connected:', data.transportId);
+    addDebugLog('✅ Transport connected confirmation', data);
   };
 
   const handleProduced = (data: any) => {
-    console.log('[CLIENT] Producer created:', data.id);
+    addDebugLog('✅ Producer created confirmation', data);
   };
 
   const handleConsumed = async (data: any) => {
     const { id, producerId, kind, rtpParameters, peerId } = data;
-    console.log(`[CLIENT] Consuming: ${id} for producer ${producerId} (${kind}) from peer ${peerId}`);
+    addDebugLog(`🍽️ Consuming media`, { 
+      consumerId: id, 
+      producerId, 
+      kind, 
+      peerId,
+      rtpParameters: {
+        codecs: rtpParameters.codecs?.length,
+        encodings: rtpParameters.encodings?.length
+      }
+    });
 
     try {
       if (!recvTransportRef.current) {
-        console.error('[CLIENT] Receive transport not ready');
+        addDebugLog('🔥 Receive transport not ready for consuming');
         return;
       }
 
@@ -445,14 +533,32 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         rtpParameters,
       });
 
-      console.log(`[CLIENT] Consumer created: ${consumer.id} for peer: ${peerId}`);
+      addDebugLog(`✅ Consumer created successfully`, { 
+        consumerId: consumer.id, 
+        peerId,
+        track: {
+          id: consumer.track.id,
+          kind: consumer.track.kind,
+          enabled: consumer.track.enabled,
+          readyState: consumer.track.readyState,
+          settings: consumer.track.getSettings()
+        }
+      });
+      
       setConsumers(prev => new Map(prev.set(id, consumer)));
 
       // Resume the consumer immediately
+      addDebugLog(`▶️ Resuming consumer`, { consumerId: id });
       socketRef.current.emit('resumeConsumer', { consumerId: id });
 
       // Create stream and update peer state
       const stream = new MediaStream([consumer.track]);
+      addDebugLog(`🌊 Created stream for peer`, { 
+        peerId, 
+        streamId: stream.id,
+        kind,
+        trackCount: stream.getTracks().length
+      });
       
       // Update peer with stream info
       setPeers(prev => {
@@ -471,11 +577,11 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         if (kind === 'video') {
           peer.videoStream = stream;
           peer.hasVideo = true;
-          console.log(`[CLIENT] Updated peer ${peerId} with video stream`);
+          addDebugLog(`📹 Updated peer with video stream`, { peerId, streamId: stream.id });
         } else if (kind === 'audio') {
           peer.audioStream = stream;
           peer.hasAudio = true;
-          console.log(`[CLIENT] Updated peer ${peerId} with audio stream`);
+          addDebugLog(`🎵 Updated peer with audio stream`, { peerId, streamId: stream.id });
         }
 
         newPeers.set(peerId, peer);
@@ -483,7 +589,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       });
 
       consumer.on('transportclose', () => {
-        console.log('[CLIENT] Consumer transport closed');
+        addDebugLog('🛑 Consumer transport closed', { consumerId: consumer.id, peerId });
         consumer.close();
         setConsumers(prev => {
           const map = new Map(prev);
@@ -492,45 +598,58 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         });
       });
 
-    } catch (error) {
-      console.error('[CLIENT] Error consuming:', error);
+      consumer.on('producerclose', () => {
+        addDebugLog('🛑 Consumer producer closed', { consumerId: consumer.id, peerId });
+        consumer.close();
+        setConsumers(prev => {
+          const map = new Map(prev);
+          map.delete(id);
+          return map;
+        });
+      });
+
+    } catch (error: any) {
+      addDebugLog('🔥 Error consuming media', { error: error.message, consumerId: id, peerId, stack: error.stack });
     }
   };
 
   const handleProducers = (producers: any[]) => {
-    console.log('[CLIENT] Received existing producers:', producers);
+    addDebugLog('📋 Received existing producers list', { count: producers.length, producers });
     if (!producers || producers.length === 0) return;
     
     producers.forEach(({ peerId, producerId, kind }) => {
       if (peerId && producerId) {
-        console.log(`[CLIENT] Consuming existing producer: ${producerId} (${kind}) from peer: ${peerId}`);
+        addDebugLog(`🔄 Consuming existing producer`, { producerId, kind, peerId });
         consume(producerId, peerId);
       }
     });
   };
 
   const handleExistingProducers = (producers: any[]) => {
-    console.log('[CLIENT] Received existing producers:', producers);
+    addDebugLog('📋 Received existing producers on join', { count: producers.length });
     handleProducers(producers);
   };
 
   const handleNewProducer = ({ peerId, producerId, kind }: any) => {
-    console.log(`[CLIENT] New producer: ${producerId} (${kind}) from peer: ${peerId}`);
+    addDebugLog(`🆕 New producer available`, { peerId, producerId, kind });
     if (!peerId || !producerId) return;
     consume(producerId, peerId);
   };
 
   const handleConsumerResumed = (data: any) => {
-    console.log('[CLIENT] Consumer resumed:', data.consumerId);
+    addDebugLog('▶️ Consumer resumed successfully', data);
   };
 
   const consume = (producerId: string, peerId: string) => {
     if (!recvTransportRef.current || !deviceRef.current) {
-      console.error('[CLIENT] Cannot consume: transport or device not ready');
+      addDebugLog('🔥 Cannot consume: transport or device not ready', { 
+        hasRecvTransport: !!recvTransportRef.current,
+        hasDevice: !!deviceRef.current
+      });
       return;
     }
 
-    console.log(`[CLIENT] Requesting to consume producer: ${producerId} from peer: ${peerId}`);
+    addDebugLog(`🍽️ Requesting to consume producer`, { producerId, peerId });
     socketRef.current.emit('consume', {
       transportId: recvTransportRef.current.id,
       producerId,
@@ -539,7 +658,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const handlePeerJoined = ({ peerId, displayName: peerDisplayName }: any) => {
-    console.log(`[CLIENT] Peer joined: ${peerId} (${peerDisplayName})`);
+    addDebugLog(`👋 Peer joined`, { peerId, displayName: peerDisplayName });
     setPeers(prev => {
       const newPeers = new Map(prev);
       const existingPeer = newPeers.get(peerId);
@@ -558,17 +677,19 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const handlePeerLeft = ({ peerId }: any) => {
-    console.log(`[CLIENT] Peer left: ${peerId}`);
+    addDebugLog(`👋 Peer left`, { peerId });
     
     // Clean up video and audio elements for this peer
     const videoElement = videoElementsRef.current.get(peerId);
     if (videoElement) {
+      addDebugLog(`🧹 Cleaning up video element for peer`, { peerId });
       videoElement.srcObject = null;
       videoElementsRef.current.delete(peerId);
     }
     
     const audioElement = audioElementsRef.current.get(peerId);
     if (audioElement) {
+      addDebugLog(`🧹 Cleaning up audio element for peer`, { peerId });
       audioElement.srcObject = null;
       audioElementsRef.current.delete(peerId);
     }
@@ -581,7 +702,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const handleExistingPeers = (existingPeers: any[]) => {
-    console.log('[CLIENT] Existing peers:', existingPeers);
+    addDebugLog('👥 Received existing peers list', { count: existingPeers.length, peers: existingPeers });
     const newPeers = new Map();
     existingPeers.forEach(peer => {
       newPeers.set(peer.id, {
@@ -594,7 +715,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const handleConsumerClosed = ({ consumerId }: any) => {
-    console.log('[CLIENT] Consumer closed:', consumerId);
+    addDebugLog('🛑 Consumer closed by server', { consumerId });
     setConsumers(prev => {
       const newConsumers = new Map(prev);
       newConsumers.delete(consumerId);
@@ -603,13 +724,78 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const handleCannotConsume = ({ producerId }: any) => {
-    console.log('[CLIENT] Cannot consume producer:', producerId);
+    addDebugLog('❌ Cannot consume producer', { producerId });
   };
 
   const handleError = (error: any) => {
-    console.error('[CLIENT] Socket error:', error);
+    addDebugLog('🔥 Socket error received', { error: error.message || error, stack: error.stack });
     setConnectionStatus(`Error: ${error.message || 'Unknown error'}`);
   };
+
+  // Video element ref callback for remote peers
+  const setVideoRef = useCallback((peer: Peer) => (el: HTMLVideoElement | null) => {
+    if (el && peer.videoStream) {
+      addDebugLog(`📺 Setting video stream for peer`, { 
+        peerId: peer.id, 
+        streamId: peer.videoStream.id,
+        trackCount: peer.videoStream.getTracks().length
+      });
+      
+      videoElementsRef.current.set(peer.id, el);
+      el.srcObject = peer.videoStream;
+      el.autoplay = true;
+      el.playsInline = true;
+      
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            addDebugLog(`✅ Video playing for peer`, { 
+              peerId: peer.id,
+              videoWidth: el.videoWidth,
+              videoHeight: el.videoHeight,
+              duration: el.duration
+            });
+          })
+          .catch(error => {
+            addDebugLog(`🔥 Error playing video for peer`, { 
+              peerId: peer.id, 
+              error: error.message 
+            });
+          });
+      }
+    }
+  }, [addDebugLog]);
+
+  // Audio element ref callback for remote peers
+  const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
+    if (el && peer.audioStream) {
+      addDebugLog(`🎵 Setting audio stream for peer`, { 
+        peerId: peer.id, 
+        streamId: peer.audioStream.id,
+        trackCount: peer.audioStream.getTracks().length
+      });
+      
+      audioElementsRef.current.set(peer.id, el);
+      el.srcObject = peer.audioStream;
+      el.autoplay = true;
+      el.playsInline = true;
+      
+      const playPromise = el.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            addDebugLog(`✅ Audio playing for peer`, { peerId: peer.id });
+          })
+          .catch(error => {
+            addDebugLog(`🔥 Error playing audio for peer`, { 
+              peerId: peer.id, 
+              error: error.message 
+            });
+          });
+      }
+    }
+  }, [addDebugLog]);
 
   const toggleAudio = () => {
     if (localStream) {
@@ -617,6 +803,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
+        addDebugLog(`🎵 Audio ${audioTrack.enabled ? 'enabled' : 'disabled'}`);
       }
     }
   };
@@ -627,241 +814,49 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoEnabled(videoTrack.enabled);
+        addDebugLog(`📹 Video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
       }
     }
-  };
-
-  const toggleAI = async () => {
-    if (!isAIEnabled) {
-      try {
-        setIsAIEnabled(true);
-        startTranscription();
-      } catch (error) {
-        alert('Microphone access is required for AI features.');
-        console.error('[CLIENT] Microphone access denied:', error);
-      }
-    } else {
-      setIsAIEnabled(false);
-      stopTranscription();
-    }
-  };
-
-  const startTranscription = () => {
-    if (recognitionRef.current && !isTranscribing) {
-      setIsTranscribing(true);
-      recognitionRef.current.start();
-    }
-  };
-
-  const stopTranscription = () => {
-    if (recognitionRef.current && isTranscribing) {
-      setIsTranscribing(false);
-      recognitionRef.current.stop();
-    }
-  };
-
-  const generateAutoNotes = async (text: string, speaker: string) => {
-    try {
-      setIsProcessing(true);
-      const response = await fetch(`${VITE_AI_API_URL}/api/meetings/auto-notes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          text,
-          speaker,
-          userId: 'meeting-user'
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.success && data.notes) {
-        const newNote: Note = {
-          id: Date.now().toString(),
-          content: data.notes,
-          timestamp: new Date(),
-          type: 'auto'
-        };
-        setNotes(prev => [...prev, newNote]);
-      }
-    } catch (error) {
-      console.error('[CLIENT] Auto notes generation failed:', error);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const generateMeetingSummary = async () => {
-    if (transcript.length === 0) {
-      alert('No transcript available to summarize.');
-      return;
-    }
-
-    try {
-      setIsProcessing(true);
-      const response = await fetch(`${VITE_AI_API_URL}/api/meetings/summary`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          transcript: transcript.map(t => `${t.speaker}: ${t.text}`).join('\n'),
-          participants: Array.from(peers.values()).map(p => p.displayName),
-          duration: Math.round((new Date().getTime() - (transcript[0]?.timestamp.getTime() || Date.now())) / 60000)
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.success && data.summary) {
-        setMeetingSummary(data.summary);
-      }
-    } catch (error) {
-      console.error('[CLIENT] Summary generation failed:', error);
-      alert('Failed to generate meeting summary. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const downloadTranscript = () => {
-    const transcriptText = transcript
-      .map(entry => `[${entry.timestamp.toLocaleTimeString()}] ${entry.speaker}: ${entry.text}`)
-      .join('\n');
-    
-    const blob = new Blob([transcriptText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `meeting-transcript-${roomName}-${new Date().toISOString().split('T')[0]}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const downloadNotes = () => {
-    const notesText = notes
-      .map(note => `[${note.timestamp.toLocaleTimeString()}] ${note.type.toUpperCase()}: ${note.content}`)
-      .join('\n\n');
-    
-    const blob = new Blob([notesText], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `meeting-notes-${roomName}-${new Date().toISOString().split('T')[0]}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const copyMeetingLink = async () => {
-    const meetingLink = `${window.location.origin}/meetings?room=${encodeURIComponent(roomName)}`;
-    try {
-      await navigator.clipboard.writeText(meetingLink);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error('[CLIENT] Failed to copy meeting link:', error);
-    }
-  };
-
-  const shareViaEmail = () => {
-    const subject = encodeURIComponent(`Join my video meeting: ${roomName}`);
-    const body = encodeURIComponent(`Hi! 
-
-I'd like to invite you to join my video meeting.
-
-Meeting Room: ${roomName}
-Meeting Link: ${window.location.origin}/meetings?room=${encodeURIComponent(roomName)}
-
-To join:
-1. Click the link above or go to ${window.location.origin}/meetings
-2. Click "Join Meeting"
-3. Enter the room name: ${roomName}
-4. Enter your name and join!
-
-See you there!`);
-    
-    window.open(`mailto:?subject=${subject}&body=${body}`);
   };
 
   const handleLeave = () => {
+    addDebugLog('👋 Leaving meeting');
     if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+      localStream.getTracks().forEach(track => {
+        addDebugLog('🛑 Stopping local track', { kind: track.kind, id: track.id });
+        track.stop();
+      });
     }
     onLeave();
   };
 
-  // Video element ref callback for remote peers
-  const setVideoRef = useCallback((peer: Peer) => (el: HTMLVideoElement | null) => {
-    if (el && peer.videoStream) {
-      console.log(`[CLIENT] Setting video stream for peer ${peer.id}`);
-      
-      // Store reference for cleanup
-      videoElementsRef.current.set(peer.id, el);
-      
-      // Set stream and play
-      el.srcObject = peer.videoStream;
-      el.autoplay = true;
-      el.playsInline = true;
-      
-      // Handle play promise properly
-      const playPromise = el.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            console.log(`[CLIENT] Video playing for peer ${peer.id}`);
-          })
-          .catch(error => {
-            console.warn(`[CLIENT] Error playing video for peer ${peer.id}:`, error);
-          });
-      }
-    }
-  }, []);
-
-  // Audio element ref callback for remote peers
-  const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
-    if (el && peer.audioStream) {
-      console.log(`[CLIENT] Setting audio stream for peer ${peer.id}`);
-      
-      // Store reference for cleanup
-      audioElementsRef.current.set(peer.id, el);
-      
-      // Set stream and play
-      el.srcObject = peer.audioStream;
-      el.autoplay = true;
-      el.playsInline = true;
-      
-      // Handle play promise properly
-      const playPromise = el.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            console.log(`[CLIENT] Audio playing for peer ${peer.id}`);
-          })
-          .catch(error => {
-            console.warn(`[CLIENT] Error playing audio for peer ${peer.id}:`, error);
-          });
-      }
-    }
-  }, []);
-
   if (!isConnected) {
     return (
-      <div className="min-h-screen bg-primary flex items-center justify-center">
-        <div className="glass-panel rounded-2xl p-8 max-w-md mx-auto text-center">
-          <div className="animate-spin w-8 h-8 border-2 border-gold-text border-t-transparent rounded-full mx-auto mb-4"></div>
-          <h3 className="text-xl font-bold text-primary mb-2">Connecting to Meeting...</h3>
-          <p className="text-secondary mb-4">{connectionStatus}</p>
-          <div className="text-sm text-secondary">
-            <p>Room: <span className="font-medium text-primary">{roomName}</span></p>
-            <p>Name: <span className="font-medium text-primary">{displayName}</span></p>
+      <div className="min-h-screen bg-primary flex flex-col">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="glass-panel rounded-2xl p-8 max-w-2xl mx-auto">
+            <div className="text-center mb-6">
+              <div className="animate-spin w-8 h-8 border-2 border-gold-text border-t-transparent rounded-full mx-auto mb-4"></div>
+              <h3 className="text-xl font-bold text-primary mb-2">Connecting to Meeting...</h3>
+              <p className="text-secondary mb-4">{connectionStatus}</p>
+              <div className="text-sm text-secondary">
+                <p>Room: <span className="font-medium text-primary">{roomName}</span></p>
+                <p>Name: <span className="font-medium text-primary">{displayName}</span></p>
+                <p>Server: <span className="font-medium text-primary">{VITE_MEDIA_API_URL}</span></p>
+              </div>
+            </div>
+            
+            {/* Debug Logs */}
+            <div className="mt-6">
+              <h4 className="text-sm font-bold text-primary mb-2">Debug Logs (Last 10):</h4>
+              <div className="bg-black/20 rounded-lg p-3 max-h-40 overflow-y-auto">
+                {debugLogs.slice(-10).map((log, index) => (
+                  <div key={index} className="text-xs text-secondary font-mono mb-1">
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -884,44 +879,17 @@ See you there!`);
           </div>
 
           <div className="flex items-center space-x-3">
-            {/* AI Toggle */}
+            {/* Debug Toggle */}
             <Button
-              onClick={toggleAI}
-              variant={isAIEnabled ? "premium" : "secondary"}
+              onClick={() => setShowTranscript(!showTranscript)}
+              variant="secondary"
               size="sm"
               className="flex items-center space-x-2"
             >
-              {isAIEnabled ? <Bot className="w-4 h-4" /> : <BotOff className="w-4 h-4" />}
-              <span>{isAIEnabled ? 'AI On' : 'AI Off'}</span>
+              <FileText className="w-4 h-4" />
+              <span>Debug ({debugLogs.length})</span>
             </Button>
 
-            {/* Transcript Toggle */}
-            {isAIEnabled && (
-              <Button
-                onClick={() => setShowTranscript(!showTranscript)}
-                variant="secondary"
-                size="sm"
-                className="flex items-center space-x-2"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Transcript ({transcript.length})</span>
-              </Button>
-            )}
-
-            {/* Notes Toggle */}
-            {isAIEnabled && (
-              <Button
-                onClick={() => setShowNotes(!showNotes)}
-                variant="secondary"
-                size="sm"
-                className="flex items-center space-x-2"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Notes ({notes.length})</span>
-              </Button>
-            )}
-
-            {/* Invite Others Button */}
             <Button
               onClick={() => setShowInviteModal(true)}
               variant="secondary"
@@ -932,7 +900,6 @@ See you there!`);
               <span>Invite Others</span>
             </Button>
 
-            {/* Leave Meeting */}
             <Button
               onClick={handleLeave}
               variant="secondary"
@@ -1062,31 +1029,9 @@ See you there!`);
               </motion.div>
             ))}
           </div>
-
-          {/* AI Status Overlay */}
-          {isAIEnabled && (
-            <div className="absolute top-20 left-8 glass-panel px-3 py-2 rounded-lg z-40">
-              <div className="flex items-center space-x-2">
-                <div className={`w-2 h-2 rounded-full ${isTranscribing ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-                <span className="text-sm text-primary font-medium">
-                  {isTranscribing ? 'AI Listening' : 'AI Ready'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Processing Indicator */}
-          {isProcessing && (
-            <div className="absolute top-20 right-8 glass-panel px-3 py-2 rounded-lg z-40">
-              <div className="flex items-center space-x-2">
-                <div className="w-4 h-4 border-2 border-gold-text border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-primary">Processing...</span>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Transcript Panel */}
+        {/* Debug Panel */}
         <AnimatePresence>
           {showTranscript && (
             <motion.div
@@ -1097,15 +1042,14 @@ See you there!`);
             >
               <div className="p-4 border-b silver-border">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-primary">Live Transcript</h3>
+                  <h3 className="font-bold text-primary">Debug Logs</h3>
                   <div className="flex space-x-2">
                     <Button
-                      onClick={downloadTranscript}
+                      onClick={() => setDebugLogs([])}
                       variant="ghost"
                       size="sm"
-                      disabled={transcript.length === 0}
                     >
-                      <Download className="w-4 h-4" />
+                      Clear
                     </Button>
                     <Button
                       onClick={() => setShowTranscript(false)}
@@ -1118,103 +1062,19 @@ See you there!`);
                 </div>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {transcript.map((entry) => (
-                  <div key={entry.id} className="glass-panel p-3 rounded-lg">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium text-primary text-sm">{entry.speaker}</span>
-                      <span className="text-xs text-secondary">
-                        {entry.timestamp.toLocaleTimeString()}
-                      </span>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="space-y-1">
+                  {debugLogs.map((log, index) => (
+                    <div key={index} className="text-xs font-mono text-secondary break-all">
+                      {log}
                     </div>
-                    <p className="text-sm text-secondary">{entry.text}</p>
-                  </div>
-                ))}
+                  ))}
+                </div>
                 
-                {transcript.length === 0 && (
+                {debugLogs.length === 0 && (
                   <div className="text-center text-secondary py-8">
                     <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>Transcript will appear here when AI is listening</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Notes Panel */}
-        <AnimatePresence>
-          {showNotes && (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 400, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              className="glass-panel border-l silver-border flex flex-col z-30"
-            >
-              <div className="p-4 border-b silver-border">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-primary">AI Notes</h3>
-                  <div className="flex space-x-2">
-                    <Button
-                      onClick={generateMeetingSummary}
-                      variant="ghost"
-                      size="sm"
-                      disabled={transcript.length === 0 || isProcessing}
-                    >
-                      <Bot className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={downloadNotes}
-                      variant="ghost"
-                      size="sm"
-                      disabled={notes.length === 0}
-                    >
-                      <Download className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      onClick={() => setShowNotes(false)}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      ×
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {/* Meeting Summary */}
-                {meetingSummary && (
-                  <div className="glass-panel p-4 rounded-lg border-gold-border">
-                    <h4 className="font-bold text-primary mb-2 flex items-center">
-                      <Bot className="w-4 h-4 mr-2" />
-                      Meeting Summary
-                    </h4>
-                    <p className="text-sm text-secondary whitespace-pre-wrap">{meetingSummary}</p>
-                  </div>
-                )}
-
-                {/* Auto Notes */}
-                {notes.map((note) => (
-                  <div key={note.id} className="glass-panel p-3 rounded-lg">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        note.type === 'auto' ? 'bg-blue-500/20 text-blue-400' : 'bg-green-500/20 text-green-400'
-                      }`}>
-                        {note.type === 'auto' ? 'AI Generated' : 'Manual'}
-                      </span>
-                      <span className="text-xs text-secondary">
-                        {note.timestamp.toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-secondary">{note.content}</p>
-                  </div>
-                ))}
-                
-                {notes.length === 0 && (
-                  <div className="text-center text-secondary py-8">
-                    <Bot className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>AI will automatically take notes during the meeting</p>
+                    <p>Debug logs will appear here</p>
                   </div>
                 )}
               </div>
@@ -1317,7 +1177,11 @@ See you there!`);
                         className="flex-1 glass-panel rounded-lg px-4 py-3 text-primary bg-gray-500/10 text-sm"
                       />
                       <Button
-                        onClick={copyMeetingLink}
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/meetings?room=${encodeURIComponent(roomName)}`);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
                         variant="ghost"
                         size="sm"
                         className="px-3"
@@ -1325,17 +1189,6 @@ See you there!`);
                         {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
                       </Button>
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Button
-                      onClick={shareViaEmail}
-                      variant="secondary"
-                      className="w-full justify-start"
-                    >
-                      <Share2 className="w-4 h-4 mr-2" />
-                      Share via Email
-                    </Button>
                   </div>
 
                   <div className="text-xs text-secondary">
