@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Device } from 'mediasoup-client';
 import io from 'socket.io-client';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText, Download, Users, Settings, Share2, Copy, Check, X } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Bot, NutOff as BotOff, FileText, Download, Users, Settings, Share2, Copy, Check, X, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import GlassCard from './ui/GlassCard';
 import Button from './ui/Button';
@@ -40,6 +40,8 @@ interface Peer {
   audioStream?: MediaStream;
   hasVideo: boolean;
   hasAudio: boolean;
+  videoElement?: HTMLVideoElement;
+  audioElement?: HTMLAudioElement;
 }
 
 const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayName, onLeave }) => {
@@ -71,14 +73,140 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   const [connectionStatus, setConnectionStatus] = useState<string>('Connecting...');
   const [copied, setCopied] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [networkInfo, setNetworkInfo] = useState<any>({});
 
-  // Enhanced logging function
-  const addDebugLog = useCallback((message: string, data?: any) => {
+  // Enhanced logging function with categorization
+  const addDebugLog = useCallback((message: string, data?: any, category: 'info' | 'warn' | 'error' | 'video' | 'audio' | 'network' = 'info') => {
     const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] ${message}`;
+    const emoji = {
+      info: '📝',
+      warn: '⚠️',
+      error: '🔥',
+      video: '📹',
+      audio: '🎵',
+      network: '🌐'
+    }[category];
+    
+    const logMessage = `[${timestamp}] ${emoji} ${message}`;
     console.log(logMessage, data || '');
-    setDebugLogs(prev => [...prev.slice(-50), logMessage]); // Keep last 50 logs
+    setDebugLogs(prev => [...prev.slice(-100), logMessage]); // Keep last 100 logs
   }, []);
+
+  // Network diagnostics
+  const checkNetworkInfo = useCallback(() => {
+    const info = {
+      userAgent: navigator.userAgent,
+      onLine: navigator.onLine,
+      connection: (navigator as any).connection,
+      webrtcSupport: {
+        getUserMedia: !!navigator.mediaDevices?.getUserMedia,
+        RTCPeerConnection: !!window.RTCPeerConnection,
+        RTCDataChannel: !!window.RTCDataChannel
+      },
+      mediaApiUrl: VITE_MEDIA_API_URL,
+      timestamp: new Date().toISOString()
+    };
+    setNetworkInfo(info);
+    addDebugLog('🌐 Network diagnostics collected', info, 'network');
+    return info;
+  }, [addDebugLog]);
+
+  // Video element monitoring
+  const monitorVideoElement = useCallback((element: HTMLVideoElement, peerId: string, type: 'local' | 'remote') => {
+    if (!element) return;
+
+    const logVideoState = () => {
+      addDebugLog(`📹 Video element state for ${type} ${peerId}`, {
+        src: element.src,
+        srcObject: !!element.srcObject,
+        videoWidth: element.videoWidth,
+        videoHeight: element.videoHeight,
+        readyState: element.readyState,
+        networkState: element.networkState,
+        paused: element.paused,
+        muted: element.muted,
+        volume: element.volume,
+        currentTime: element.currentTime,
+        duration: element.duration,
+        buffered: element.buffered.length,
+        error: element.error?.message
+      }, 'video');
+    };
+
+    // Initial state
+    logVideoState();
+
+    // Monitor events
+    const events = ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'playing', 'pause', 'ended', 'error', 'stalled', 'waiting'];
+    
+    events.forEach(eventName => {
+      element.addEventListener(eventName, () => {
+        addDebugLog(`📹 Video event: ${eventName} for ${type} ${peerId}`, {
+          readyState: element.readyState,
+          networkState: element.networkState,
+          error: element.error?.message
+        }, 'video');
+        
+        if (eventName === 'error' && element.error) {
+          addDebugLog(`🔥 Video error for ${type} ${peerId}`, {
+            code: element.error.code,
+            message: element.error.message
+          }, 'error');
+        }
+      });
+    });
+
+    // Monitor stream changes
+    const observer = new MutationObserver(() => {
+      logVideoState();
+    });
+    
+    observer.observe(element, { attributes: true, attributeFilter: ['src'] });
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [addDebugLog]);
+
+  // Audio element monitoring
+  const monitorAudioElement = useCallback((element: HTMLAudioElement, peerId: string) => {
+    if (!element) return;
+
+    const logAudioState = () => {
+      addDebugLog(`🎵 Audio element state for ${peerId}`, {
+        src: element.src,
+        srcObject: !!element.srcObject,
+        readyState: element.readyState,
+        networkState: element.networkState,
+        paused: element.paused,
+        muted: element.muted,
+        volume: element.volume,
+        currentTime: element.currentTime,
+        duration: element.duration,
+        error: element.error?.message
+      }, 'audio');
+    };
+
+    // Initial state
+    logAudioState();
+
+    // Monitor events
+    const events = ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'playing', 'pause', 'ended', 'error'];
+    
+    events.forEach(eventName => {
+      element.addEventListener(eventName, () => {
+        addDebugLog(`🎵 Audio event: ${eventName} for ${peerId}`, {
+          readyState: element.readyState,
+          networkState: element.networkState
+        }, 'audio');
+      });
+    });
+
+    return () => {
+      // Cleanup if needed
+    };
+  }, [addDebugLog]);
 
   // Calculate grid layout based on participant count
   const getGridLayout = useCallback((participantCount: number) => {
@@ -102,6 +230,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
   // Initialize socket connection
   useEffect(() => {
+    checkNetworkInfo();
     addDebugLog('🚀 Initializing Mediasoup meeting', { roomName, displayName, mediaApiUrl: VITE_MEDIA_API_URL });
     setConnectionStatus('Connecting to server...');
     
@@ -118,13 +247,13 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     });
 
     socketRef.current.on('disconnect', (reason: string) => {
-      addDebugLog('❌ Disconnected from mediasoup server', { reason });
+      addDebugLog('❌ Disconnected from mediasoup server', { reason }, 'error');
       setConnectionStatus('Disconnected');
       setIsConnected(false);
     });
 
     socketRef.current.on('connect_error', (error: any) => {
-      addDebugLog('🔥 Connection error', { error: error.message, stack: error.stack });
+      addDebugLog('🔥 Connection error', { error: error.message, stack: error.stack }, 'error');
       setConnectionStatus('Connection failed');
     });
 
@@ -159,7 +288,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       videoElementsRef.current.clear();
       audioElementsRef.current.clear();
     };
-  }, [roomName, displayName, addDebugLog]);
+  }, [roomName, displayName, addDebugLog, checkNetworkInfo]);
 
   const joinRoom = () => {
     addDebugLog('🏠 Joining room', { roomName, displayName });
@@ -191,7 +320,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       await createTransports();
       
     } catch (error: any) {
-      addDebugLog('🔥 Error handling router RTP capabilities', { error: error.message, stack: error.stack });
+      addDebugLog('🔥 Error handling router RTP capabilities', { error: error.message, stack: error.stack }, 'error');
       setConnectionStatus('Failed to initialize device');
     }
   };
@@ -215,8 +344,14 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       iceParametersCount: iceParameters?.usernameFragment ? 1 : 0,
       iceCandidatesCount: iceCandidates?.length,
       dtlsRole: dtlsParameters?.role,
-      dtlsFingerprints: dtlsParameters?.fingerprints?.length
-    });
+      dtlsFingerprints: dtlsParameters?.fingerprints?.length,
+      iceCandidates: iceCandidates?.map((c: any) => ({ 
+        ip: c.ip, 
+        port: c.port, 
+        protocol: c.protocol, 
+        type: c.type 
+      }))
+    }, 'network');
     
     try {
       if (direction === 'send' && !sendTransportRef.current) {
@@ -230,7 +365,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
         sendTransportRef.current.on('connect', async ({ dtlsParameters }: any, callback: any, errback: any) => {
           try {
-            addDebugLog('🔗 Send transport connecting', { transportId: id, dtlsRole: dtlsParameters.role });
+            addDebugLog('🔗 Send transport connecting', { transportId: id, dtlsRole: dtlsParameters.role }, 'network');
             socketRef.current.emit('connectTransport', {
               transportId: id,
               dtlsParameters,
@@ -239,7 +374,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             const connectPromise = new Promise((resolve, reject) => {
               const timeout = setTimeout(() => {
                 reject(new Error('Transport connect timeout'));
-              }, 10000);
+              }, 15000);
               
               const handler = (data: any) => {
                 if (data.transportId === id) {
@@ -255,7 +390,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             addDebugLog('✅ Send transport connected successfully');
             callback();
           } catch (error: any) {
-            addDebugLog('🔥 Send transport connect error', { error: error.message });
+            addDebugLog('🔥 Send transport connect error', { error: error.message }, 'error');
             errback(error);
           }
         });
@@ -280,7 +415,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             const producePromise = new Promise((resolve, reject) => {
               const timeout = setTimeout(() => {
                 reject(new Error('Produce timeout'));
-              }, 10000);
+              }, 15000);
               
               const handler = (data: any) => {
                 clearTimeout(timeout);
@@ -294,17 +429,21 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             addDebugLog('✅ Media produced successfully', { producerId: result.id, kind: parameters.kind });
             callback({ id: result.id });
           } catch (error: any) {
-            addDebugLog('🔥 Produce error', { error: error.message, kind: parameters.kind });
+            addDebugLog('🔥 Produce error', { error: error.message, kind: parameters.kind }, 'error');
             errback(error);
           }
         });
 
         sendTransportRef.current.on('connectionstatechange', (state: string) => {
-          addDebugLog(`📤 Send transport connection state: ${state}`);
+          addDebugLog(`📤 Send transport connection state: ${state}`, {}, 'network');
+          if (state === 'failed') {
+            addDebugLog('🔥 CRITICAL: Send transport failed', {}, 'error');
+            checkNetworkInfo();
+          }
         });
 
         sendTransportRef.current.on('icestatechange', (state: string) => {
-          addDebugLog(`📤 Send transport ICE state: ${state}`);
+          addDebugLog(`📤 Send transport ICE state: ${state}`, {}, 'network');
         });
 
         if (recvTransportRef.current) {
@@ -322,7 +461,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
         recvTransportRef.current.on('connect', async ({ dtlsParameters }: any, callback: any, errback: any) => {
           try {
-            addDebugLog('🔗 Receive transport connecting', { transportId: id, dtlsRole: dtlsParameters.role });
+            addDebugLog('🔗 Receive transport connecting', { transportId: id, dtlsRole: dtlsParameters.role }, 'network');
             socketRef.current.emit('connectTransport', {
               transportId: id,
               dtlsParameters,
@@ -331,7 +470,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             const connectPromise = new Promise((resolve, reject) => {
               const timeout = setTimeout(() => {
                 reject(new Error('Transport connect timeout'));
-              }, 10000);
+              }, 15000);
               
               const handler = (data: any) => {
                 if (data.transportId === id) {
@@ -347,31 +486,28 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
             addDebugLog('✅ Receive transport connected successfully');
             callback();
           } catch (error: any) {
-            addDebugLog('🔥 Receive transport connect error', { error: error.message });
+            addDebugLog('🔥 Receive transport connect error', { error: error.message }, 'error');
             errback(error);
           }
         });
 
         recvTransportRef.current.on('connectionstatechange', (state: string) => {
-          addDebugLog(`📥 Receive transport connection state: ${state}`);
+          addDebugLog(`📥 Receive transport connection state: ${state}`, {}, 'network');
           if (state === 'failed') {
-            addDebugLog('🔥 CRITICAL: Receive transport failed - checking network connectivity');
-            // Log additional debugging info
-            addDebugLog('🔍 Network debug info', {
-              userAgent: navigator.userAgent,
-              connection: (navigator as any).connection,
-              onLine: navigator.onLine,
-              mediaApiUrl: VITE_MEDIA_API_URL
-            });
+            addDebugLog('🔥 CRITICAL: Receive transport failed - this is why you can\'t see/hear peers!', {
+              networkInfo,
+              iceCandidates: iceCandidates?.map((c: any) => ({ ip: c.ip, port: c.port, protocol: c.protocol }))
+            }, 'error');
+            checkNetworkInfo();
           }
         });
 
         recvTransportRef.current.on('icestatechange', (state: string) => {
-          addDebugLog(`📥 Receive transport ICE state: ${state}`);
+          addDebugLog(`📥 Receive transport ICE state: ${state}`, {}, 'network');
         });
 
         recvTransportRef.current.on('iceselectedtuplechange', (iceSelectedTuple: any) => {
-          addDebugLog('📥 Receive transport ICE selected tuple changed', { iceSelectedTuple });
+          addDebugLog('📥 Receive transport ICE selected tuple changed', { iceSelectedTuple }, 'network');
         });
 
         if (sendTransportRef.current) {
@@ -379,7 +515,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         }
       }
     } catch (error: any) {
-      addDebugLog('🔥 Error creating transport', { error: error.message, direction, stack: error.stack });
+      addDebugLog('🔥 Error creating transport', { error: error.message, direction, stack: error.stack }, 'error');
       setConnectionStatus('Failed to create transport');
     }
   };
@@ -427,16 +563,16 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
           trackId: audioTrack.id,
           settings: audioTrack.getSettings(),
           constraints: audioTrack.getConstraints()
-        });
+        }, 'audio');
         const audioProducer = await sendTransportRef.current.produce({ track: audioTrack });
         setProducers(prev => new Map(prev.set('audio', audioProducer)));
         
         audioProducer.on('trackended', () => {
-          addDebugLog('🛑 Audio track ended');
+          addDebugLog('🛑 Audio track ended', {}, 'audio');
         });
 
         audioProducer.on('transportclose', () => {
-          addDebugLog('🛑 Audio producer transport closed');
+          addDebugLog('🛑 Audio producer transport closed', {}, 'audio');
         });
       }
 
@@ -445,16 +581,16 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
           trackId: videoTrack.id,
           settings: videoTrack.getSettings(),
           constraints: videoTrack.getConstraints()
-        });
+        }, 'video');
         const videoProducer = await sendTransportRef.current.produce({ track: videoTrack });
         setProducers(prev => new Map(prev.set('video', videoProducer)));
         
         videoProducer.on('trackended', () => {
-          addDebugLog('🛑 Video track ended');
+          addDebugLog('🛑 Video track ended', {}, 'video');
         });
 
         videoProducer.on('transportclose', () => {
-          addDebugLog('🛑 Video producer transport closed');
+          addDebugLog('🛑 Video producer transport closed', {}, 'video');
         });
       }
 
@@ -463,7 +599,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       addDebugLog('🎉 Successfully connected and producing media');
 
     } catch (error: any) {
-      addDebugLog('🔥 Error starting production', { error: error.message, stack: error.stack });
+      addDebugLog('🔥 Error starting production', { error: error.message, stack: error.stack }, 'error');
       setConnectionStatus('Media access denied');
     }
   };
@@ -474,13 +610,16 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       addDebugLog('📺 Attaching local stream to video element', { 
         streamId: localStream.id,
         videoElement: !!localVideoRef.current
-      });
+      }, 'video');
       const videoElement = localVideoRef.current;
       
       videoElement.srcObject = localStream;
       videoElement.muted = true;
       videoElement.autoplay = true;
       videoElement.playsInline = true;
+      
+      // Monitor local video element
+      monitorVideoElement(videoElement, 'local', 'local');
       
       const playPromise = videoElement.play();
       if (playPromise !== undefined) {
@@ -490,14 +629,14 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
               videoWidth: videoElement.videoWidth,
               videoHeight: videoElement.videoHeight,
               duration: videoElement.duration
-            });
+            }, 'video');
           })
           .catch(error => {
-            addDebugLog('🔥 Local video play failed', { error: error.message });
+            addDebugLog('🔥 Local video play failed', { error: error.message }, 'error');
           });
       }
     }
-  }, [localStream, addDebugLog]);
+  }, [localStream, addDebugLog, monitorVideoElement]);
 
   const handleTransportConnected = (data: any) => {
     addDebugLog('✅ Transport connected confirmation', data);
@@ -522,7 +661,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
     try {
       if (!recvTransportRef.current) {
-        addDebugLog('🔥 Receive transport not ready for consuming');
+        addDebugLog('🔥 Receive transport not ready for consuming', {}, 'error');
         return;
       }
 
@@ -557,7 +696,13 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         peerId, 
         streamId: stream.id,
         kind,
-        trackCount: stream.getTracks().length
+        trackCount: stream.getTracks().length,
+        trackDetails: stream.getTracks().map(track => ({
+          id: track.id,
+          kind: track.kind,
+          enabled: track.enabled,
+          readyState: track.readyState
+        }))
       });
       
       // Update peer with stream info
@@ -571,17 +716,27 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
           hasVideo: existingPeer?.hasVideo || false,
           hasAudio: existingPeer?.hasAudio || false,
           videoStream: existingPeer?.videoStream,
-          audioStream: existingPeer?.audioStream
+          audioStream: existingPeer?.audioStream,
+          videoElement: existingPeer?.videoElement,
+          audioElement: existingPeer?.audioElement
         };
 
         if (kind === 'video') {
           peer.videoStream = stream;
           peer.hasVideo = true;
-          addDebugLog(`📹 Updated peer with video stream`, { peerId, streamId: stream.id });
+          addDebugLog(`📹 Updated peer with video stream`, { 
+            peerId, 
+            streamId: stream.id,
+            hasVideoElement: !!peer.videoElement
+          }, 'video');
         } else if (kind === 'audio') {
           peer.audioStream = stream;
           peer.hasAudio = true;
-          addDebugLog(`🎵 Updated peer with audio stream`, { peerId, streamId: stream.id });
+          addDebugLog(`🎵 Updated peer with audio stream`, { 
+            peerId, 
+            streamId: stream.id,
+            hasAudioElement: !!peer.audioElement
+          }, 'audio');
         }
 
         newPeers.set(peerId, peer);
@@ -609,7 +764,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       });
 
     } catch (error: any) {
-      addDebugLog('🔥 Error consuming media', { error: error.message, consumerId: id, peerId, stack: error.stack });
+      addDebugLog('🔥 Error consuming media', { error: error.message, consumerId: id, peerId, stack: error.stack }, 'error');
     }
   };
 
@@ -644,8 +799,9 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     if (!recvTransportRef.current || !deviceRef.current) {
       addDebugLog('🔥 Cannot consume: transport or device not ready', { 
         hasRecvTransport: !!recvTransportRef.current,
-        hasDevice: !!deviceRef.current
-      });
+        hasDevice: !!deviceRef.current,
+        recvTransportState: recvTransportRef.current?.connectionState
+      }, 'error');
       return;
     }
 
@@ -669,7 +825,9 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
         hasVideo: existingPeer?.hasVideo || false,
         hasAudio: existingPeer?.hasAudio || false,
         videoStream: existingPeer?.videoStream,
-        audioStream: existingPeer?.audioStream
+        audioStream: existingPeer?.audioStream,
+        videoElement: existingPeer?.videoElement,
+        audioElement: existingPeer?.audioElement
       });
       
       return newPeers;
@@ -682,14 +840,14 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
     // Clean up video and audio elements for this peer
     const videoElement = videoElementsRef.current.get(peerId);
     if (videoElement) {
-      addDebugLog(`🧹 Cleaning up video element for peer`, { peerId });
+      addDebugLog(`🧹 Cleaning up video element for peer`, { peerId }, 'video');
       videoElement.srcObject = null;
       videoElementsRef.current.delete(peerId);
     }
     
     const audioElement = audioElementsRef.current.get(peerId);
     if (audioElement) {
-      addDebugLog(`🧹 Cleaning up audio element for peer`, { peerId });
+      addDebugLog(`🧹 Cleaning up audio element for peer`, { peerId }, 'audio');
       audioElement.srcObject = null;
       audioElementsRef.current.delete(peerId);
     }
@@ -724,78 +882,137 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
   };
 
   const handleCannotConsume = ({ producerId }: any) => {
-    addDebugLog('❌ Cannot consume producer', { producerId });
+    addDebugLog('❌ Cannot consume producer', { producerId }, 'warn');
   };
 
   const handleError = (error: any) => {
-    addDebugLog('🔥 Socket error received', { error: error.message || error, stack: error.stack });
+    addDebugLog('🔥 Socket error received', { error: error.message || error, stack: error.stack }, 'error');
     setConnectionStatus(`Error: ${error.message || 'Unknown error'}`);
   };
 
-  // Video element ref callback for remote peers
+  // Enhanced video element ref callback for remote peers
   const setVideoRef = useCallback((peer: Peer) => (el: HTMLVideoElement | null) => {
-    if (el && peer.videoStream) {
-      addDebugLog(`📺 Setting video stream for peer`, { 
-        peerId: peer.id, 
-        streamId: peer.videoStream.id,
-        trackCount: peer.videoStream.getTracks().length
-      });
-      
+    if (el) {
+      addDebugLog(`📺 Video element created for peer`, { peerId: peer.id }, 'video');
       videoElementsRef.current.set(peer.id, el);
-      el.srcObject = peer.videoStream;
-      el.autoplay = true;
-      el.playsInline = true;
       
-      const playPromise = el.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            addDebugLog(`✅ Video playing for peer`, { 
-              peerId: peer.id,
-              videoWidth: el.videoWidth,
-              videoHeight: el.videoHeight,
-              duration: el.duration
-            });
-          })
-          .catch(error => {
-            addDebugLog(`🔥 Error playing video for peer`, { 
-              peerId: peer.id, 
-              error: error.message 
-            });
-          });
-      }
-    }
-  }, [addDebugLog]);
-
-  // Audio element ref callback for remote peers
-  const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
-    if (el && peer.audioStream) {
-      addDebugLog(`🎵 Setting audio stream for peer`, { 
-        peerId: peer.id, 
-        streamId: peer.audioStream.id,
-        trackCount: peer.audioStream.getTracks().length
+      // Update peer with element reference
+      setPeers(prev => {
+        const newPeers = new Map(prev);
+        const existingPeer = newPeers.get(peer.id);
+        if (existingPeer) {
+          existingPeer.videoElement = el;
+          newPeers.set(peer.id, existingPeer);
+        }
+        return newPeers;
       });
-      
-      audioElementsRef.current.set(peer.id, el);
-      el.srcObject = peer.audioStream;
-      el.autoplay = true;
-      el.playsInline = true;
-      
-      const playPromise = el.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            addDebugLog(`✅ Audio playing for peer`, { peerId: peer.id });
-          })
-          .catch(error => {
-            addDebugLog(`🔥 Error playing audio for peer`, { 
-              peerId: peer.id, 
-              error: error.message 
+
+      // Monitor this video element
+      monitorVideoElement(el, peer.id, 'remote');
+
+      if (peer.videoStream) {
+        addDebugLog(`📺 Attaching video stream to element`, { 
+          peerId: peer.id, 
+          streamId: peer.videoStream.id,
+          elementReady: !!el
+        }, 'video');
+        
+        el.srcObject = peer.videoStream;
+        el.autoplay = true;
+        el.playsInline = true;
+        
+        const playPromise = el.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              addDebugLog(`✅ Video playing for peer`, { 
+                peerId: peer.id,
+                videoWidth: el.videoWidth,
+                videoHeight: el.videoHeight,
+                duration: el.duration,
+                currentTime: el.currentTime
+              }, 'video');
+            })
+            .catch(error => {
+              addDebugLog(`🔥 Error playing video for peer`, { 
+                peerId: peer.id, 
+                error: error.message,
+                elementState: {
+                  readyState: el.readyState,
+                  networkState: el.networkState,
+                  paused: el.paused
+                }
+              }, 'error');
             });
-          });
+        }
+      } else {
+        addDebugLog(`⚠️ No video stream available for peer`, { peerId: peer.id }, 'warn');
       }
+    } else {
+      addDebugLog(`❌ Video element is null for peer`, { peerId: peer.id }, 'error');
     }
-  }, [addDebugLog]);
+  }, [addDebugLog, monitorVideoElement]);
+
+  // Enhanced audio element ref callback for remote peers
+  const setAudioRef = useCallback((peer: Peer) => (el: HTMLAudioElement | null) => {
+    if (el) {
+      addDebugLog(`🎵 Audio element created for peer`, { peerId: peer.id }, 'audio');
+      audioElementsRef.current.set(peer.id, el);
+      
+      // Update peer with element reference
+      setPeers(prev => {
+        const newPeers = new Map(prev);
+        const existingPeer = newPeers.get(peer.id);
+        if (existingPeer) {
+          existingPeer.audioElement = el;
+          newPeers.set(peer.id, existingPeer);
+        }
+        return newPeers;
+      });
+
+      // Monitor this audio element
+      monitorAudioElement(el, peer.id);
+
+      if (peer.audioStream) {
+        addDebugLog(`🎵 Attaching audio stream to element`, { 
+          peerId: peer.id, 
+          streamId: peer.audioStream.id,
+          elementReady: !!el
+        }, 'audio');
+        
+        el.srcObject = peer.audioStream;
+        el.autoplay = true;
+        el.playsInline = true;
+        
+        const playPromise = el.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              addDebugLog(`✅ Audio playing for peer`, { 
+                peerId: peer.id,
+                duration: el.duration,
+                volume: el.volume
+              }, 'audio');
+            })
+            .catch(error => {
+              addDebugLog(`🔥 Error playing audio for peer`, { 
+                peerId: peer.id, 
+                error: error.message,
+                elementState: {
+                  readyState: el.readyState,
+                  networkState: el.networkState,
+                  paused: el.paused
+                }
+              }, 'error');
+            });
+        }
+      } else {
+        addDebugLog(`⚠️ No audio stream available for peer`, { peerId: peer.id }, 'warn');
+      }
+    } else {
+      addDebugLog(`❌ Audio element is null for peer`, { peerId: peer.id }, 'error');
+    }
+  }, [addDebugLog, monitorAudioElement]);
 
   const toggleAudio = () => {
     if (localStream) {
@@ -803,7 +1020,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
-        addDebugLog(`🎵 Audio ${audioTrack.enabled ? 'enabled' : 'disabled'}`);
+        addDebugLog(`🎵 Audio ${audioTrack.enabled ? 'enabled' : 'disabled'}`, {}, 'audio');
       }
     }
   };
@@ -814,7 +1031,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoEnabled(videoTrack.enabled);
-        addDebugLog(`📹 Video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
+        addDebugLog(`📹 Video ${videoTrack.enabled ? 'enabled' : 'disabled'}`, {}, 'video');
       }
     }
   };
@@ -828,6 +1045,108 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
       });
     }
     onLeave();
+  };
+
+  // Debug panel with categorized logs
+  const renderDebugPanel = () => {
+    const categories = ['error', 'network', 'video', 'audio', 'info'];
+    const filteredLogs = debugLogs.filter(log => {
+      // Show all logs by default, could add filtering here
+      return true;
+    });
+
+    return (
+      <motion.div
+        initial={{ width: 0, opacity: 0 }}
+        animate={{ width: 500, opacity: 1 }}
+        exit={{ width: 0, opacity: 0 }}
+        className="glass-panel border-l silver-border flex flex-col z-30 max-w-[500px]"
+      >
+        <div className="p-4 border-b silver-border">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-primary">Debug Panel</h3>
+            <div className="flex space-x-2">
+              <Button
+                onClick={() => setDebugLogs([])}
+                variant="ghost"
+                size="sm"
+              >
+                Clear
+              </Button>
+              <Button
+                onClick={() => setShowDebugPanel(false)}
+                variant="ghost"
+                size="sm"
+              >
+                ×
+              </Button>
+            </div>
+          </div>
+          
+          {/* Critical Status */}
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center space-x-2">
+              <span className="font-medium">Send Transport:</span>
+              <span className={sendTransportRef.current?.connectionState === 'connected' ? 'text-green-500' : 'text-red-500'}>
+                {sendTransportRef.current?.connectionState || 'Not created'}
+              </span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="font-medium">Recv Transport:</span>
+              <span className={recvTransportRef.current?.connectionState === 'connected' ? 'text-green-500' : 'text-red-500'}>
+                {recvTransportRef.current?.connectionState || 'Not created'}
+              </span>
+              {recvTransportRef.current?.connectionState === 'failed' && (
+                <AlertTriangle className="w-4 h-4 text-red-500" />
+              )}
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="font-medium">Peers:</span>
+              <span className="text-primary">{peers.size}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="font-medium">Consumers:</span>
+              <span className="text-primary">{consumers.size}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-4">
+          <div className="space-y-1">
+            {filteredLogs.slice(-50).map((log, index) => {
+              const isError = log.includes('🔥');
+              const isWarning = log.includes('⚠️');
+              const isVideo = log.includes('📹') || log.includes('📺');
+              const isAudio = log.includes('🎵');
+              const isNetwork = log.includes('🌐') || log.includes('📡') || log.includes('🚛');
+              
+              return (
+                <div 
+                  key={index} 
+                  className={`text-xs font-mono break-all p-1 rounded ${
+                    isError ? 'bg-red-500/10 text-red-400' :
+                    isWarning ? 'bg-yellow-500/10 text-yellow-400' :
+                    isVideo ? 'bg-purple-500/10 text-purple-400' :
+                    isAudio ? 'bg-blue-500/10 text-blue-400' :
+                    isNetwork ? 'bg-green-500/10 text-green-400' :
+                    'text-secondary'
+                  }`}
+                >
+                  {log}
+                </div>
+              );
+            })}
+          </div>
+          
+          {debugLogs.length === 0 && (
+            <div className="text-center text-secondary py-8">
+              <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>Debug logs will appear here</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
   };
 
   if (!isConnected) {
@@ -876,13 +1195,26 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
               <Users className="w-4 h-4" />
               <span>{totalParticipants} participant{totalParticipants !== 1 ? 's' : ''}</span>
             </div>
+            
+            {/* Transport Status Indicators */}
+            <div className="flex items-center space-x-2 text-xs">
+              <div className={`w-2 h-2 rounded-full ${
+                sendTransportRef.current?.connectionState === 'connected' ? 'bg-green-500' : 'bg-red-500'
+              }`} title={`Send: ${sendTransportRef.current?.connectionState || 'Not ready'}`} />
+              <div className={`w-2 h-2 rounded-full ${
+                recvTransportRef.current?.connectionState === 'connected' ? 'bg-green-500' : 'bg-red-500'
+              }`} title={`Receive: ${recvTransportRef.current?.connectionState || 'Not ready'}`} />
+              {recvTransportRef.current?.connectionState === 'failed' && (
+                <AlertTriangle className="w-4 h-4 text-red-500" title="Receive transport failed - this is why you can't see/hear peers!" />
+              )}
+            </div>
           </div>
 
           <div className="flex items-center space-x-3">
             {/* Debug Toggle */}
             <Button
-              onClick={() => setShowTranscript(!showTranscript)}
-              variant="secondary"
+              onClick={() => setShowDebugPanel(!showDebugPanel)}
+              variant={showDebugPanel ? "premium" : "secondary"}
               size="sm"
               className="flex items-center space-x-2"
             >
@@ -1026,6 +1358,11 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
                     </div>
                   )}
                 </div>
+                
+                {/* Debug info overlay for each peer */}
+                <div className="absolute top-2 left-2 text-xs text-white bg-black/50 rounded px-2 py-1">
+                  V:{peer.hasVideo ? '✓' : '✗'} A:{peer.hasAudio ? '✓' : '✗'}
+                </div>
               </motion.div>
             ))}
           </div>
@@ -1033,53 +1370,7 @@ const MediasoupMeeting: React.FC<MediasoupMeetingProps> = ({ roomName, displayNa
 
         {/* Debug Panel */}
         <AnimatePresence>
-          {showTranscript && (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 400, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              className="glass-panel border-l silver-border flex flex-col z-30"
-            >
-              <div className="p-4 border-b silver-border">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-primary">Debug Logs</h3>
-                  <div className="flex space-x-2">
-                    <Button
-                      onClick={() => setDebugLogs([])}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      Clear
-                    </Button>
-                    <Button
-                      onClick={() => setShowTranscript(false)}
-                      variant="ghost"
-                      size="sm"
-                    >
-                      ×
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="space-y-1">
-                  {debugLogs.map((log, index) => (
-                    <div key={index} className="text-xs font-mono text-secondary break-all">
-                      {log}
-                    </div>
-                  ))}
-                </div>
-                
-                {debugLogs.length === 0 && (
-                  <div className="text-center text-secondary py-8">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>Debug logs will appear here</p>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
+          {showDebugPanel && renderDebugPanel()}
         </AnimatePresence>
       </div>
 
