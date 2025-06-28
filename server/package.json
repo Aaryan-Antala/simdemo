@@ -8,11 +8,9 @@
     "dev:start": "nodemon app.js",
     "start:ai": "node ai-assistant.js",
     "dev:ai": "nodemon ai-assistant.js",
-    "start:media": "node media-server.js",
-    "dev:media": "nodemon media-server.js",
     "start:workspace": "node workspace-api.js",
     "dev:workspace": "nodemon workspace-api.js",
-    "dev": "concurrently \"npm run dev:start\" \"npm run dev:ai\" \"npm run dev:media\" \"npm run dev:workspace\""
+    "dev": "concurrently \"npm run dev:start\" \"npm run dev:ai\" \"npm run dev:workspace\""
   },
   "dependencies": {
     "@daily-co/daily-js": "^0.56.0",
@@ -24,10 +22,7 @@
     "fs-extra": "^11.3.0",
     "google-auth-library": "^9.15.1",
     "googleapis": "^126.0.1",
-    "mediasoup": "^3.13.24",
     "node-fetch": "^2.7.0",
-    "simple-peer": "^9.11.1",
-    "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "uuid": "^9.0.1"
   },
@@ -42,7 +37,6 @@
     "tavus",
     "gemini",
     "gmail",
-    "mediasoup",
     "supabase",
     "workspace",
     "latex",

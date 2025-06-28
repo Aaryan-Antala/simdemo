@@ -10,15 +10,8 @@ import ChannelList from '../components/ChannelList';
 import TaskPanel from '../components/TaskPanel';
 import CalendarPanel from '../components/CalendarPanel';
 import MeetingControls from '../components/MeetingControls';
-import MediasoupMeeting from '../components/MediasoupMeeting';
 import GlassCard from '../components/ui/GlassCard';
 import Button from '../components/ui/Button';
-const VITE_AI_API_URL = import.meta.env.VITE_AI_API_URL;
-const VITE_API_URL = import.meta.env.VITE_API_URL;
-const VITE_MEDIA_API_URL = import.meta.env.VITE_MEDIA_API_URL;
-const VITE_WORKSPACE_API_URL = import.meta.env.VITE_WORKSPACE_API_URL;
-const VITE_APP_URL = import.meta.env.VITE_APP_URL;
-const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL;
 
 const WorkspacePage: React.FC = () => {
   const navigate = useNavigate();
@@ -90,7 +83,7 @@ const WorkspacePage: React.FC = () => {
     if (!user) return;
     
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/channels/${user.id}`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/channels/${user.id}`, {
         credentials: 'include'
       });
       
@@ -215,7 +208,7 @@ const WorkspacePage: React.FC = () => {
 
   const handleEditMessage = async (messageId: string, newContent: string) => {
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/messages/${messageId}`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/messages/${messageId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -244,7 +237,7 @@ const WorkspacePage: React.FC = () => {
 
   const handleDeleteMessage = async (messageId: string) => {
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/messages/${messageId}`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/messages/${messageId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -272,7 +265,7 @@ const WorkspacePage: React.FC = () => {
 
   const processMessageForTasks = async (message: Message, mentions: string[]) => {
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/process-message`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/process-message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -323,7 +316,7 @@ const WorkspacePage: React.FC = () => {
     if (!user) return;
 
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/channels`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/channels`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -356,7 +349,7 @@ const WorkspacePage: React.FC = () => {
     if (!user) return;
 
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/channels/${channelId}/join`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/channels/${channelId}/join`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -386,7 +379,7 @@ const WorkspacePage: React.FC = () => {
     if (!user) return;
 
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/channels/${channelId}/leave`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/channels/${channelId}/leave`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -419,7 +412,7 @@ const WorkspacePage: React.FC = () => {
 
   const handleDeleteChannel = async (channelId: string) => {
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/channels/${channelId}`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/channels/${channelId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
@@ -454,7 +447,7 @@ const WorkspacePage: React.FC = () => {
     if (!user) return;
 
     try {
-      const response = await fetch(`${VITE_WORKSPACE_API_URL}/api/workspace/summarize-channel`, {
+      const response = await fetch(`${import.meta.env.VITE_WORKSPACE_API_URL}/api/workspace/summarize-channel`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -696,11 +689,37 @@ const WorkspacePage: React.FC = () => {
                 transition={{ duration: 0.2 }}
               >
                 {currentMeeting ? (
-                  <MediasoupMeeting
-                    roomName={currentMeeting.roomName}
-                    displayName={currentMeeting.displayName}
-                    onLeave={handleLeaveMeeting}
-                  />
+                  <div className="flex-1 flex items-center justify-center p-8">
+                    <div className="max-w-2xl mx-auto text-center">
+                      <GlassCard className="p-12" goldBorder>
+                        <Video className="w-24 h-24 text-secondary mx-auto mb-8 opacity-50" />
+                        <h2 className="text-3xl font-bold gradient-gold-silver mb-6">
+                          Meeting Ready
+                        </h2>
+                        <div className="space-y-4 text-left">
+                          <div className="glass-panel p-4 rounded-lg">
+                            <h3 className="font-bold text-primary mb-2">Meeting Details:</h3>
+                            <p className="text-secondary">Room: {currentMeeting.roomName}</p>
+                            <p className="text-secondary">Display Name: {currentMeeting.displayName}</p>
+                          </div>
+                          <div className="glass-panel p-4 rounded-lg bg-blue-500/10 border-blue-500/30">
+                            <h3 className="font-bold text-blue-400 mb-2">Ready for Integration:</h3>
+                            <p className="text-secondary text-sm">
+                              This is where your new video service will be integrated. 
+                              The meeting controls and room management are ready.
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          onClick={handleLeaveMeeting}
+                          variant="secondary"
+                          className="mt-6"
+                        >
+                          Leave Meeting
+                        </Button>
+                      </GlassCard>
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex-1 flex items-center justify-center p-8">
                     <div className="max-w-2xl mx-auto text-center">

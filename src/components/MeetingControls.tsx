@@ -3,12 +3,6 @@ import { motion } from 'framer-motion';
 import { Video, Users, Plus, LogIn, ArrowRight, Copy, Check, Share2, QrCode, Link } from 'lucide-react';
 import GlassCard from './ui/GlassCard';
 import Button from './ui/Button';
-const VITE_AI_API_URL = import.meta.env.VITE_AI_API_URL;
-const VITE_API_URL = import.meta.env.VITE_API_URL;
-const VITE_MEDIA_API_URL = import.meta.env.VITE_MEDIA_API_URL;
-const VITE_WORKSPACE_API_URL = import.meta.env.VITE_WORKSPACE_API_URL;
-const VITE_APP_URL = import.meta.env.VITE_APP_URL;
-const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL;
 
 interface MeetingControlsProps {
   onStartMeeting: (roomName: string, displayName: string) => void;
@@ -138,7 +132,7 @@ See you there!`);
             </div>
             <h3 className="text-xl font-bold text-primary mb-4">Start New Meeting</h3>
             <p className="text-secondary mb-6 text-sm">
-              Create a new meeting room and invite others to join your video conference with AI assistance.
+              Create a new meeting room and invite others to join your video conference.
             </p>
             <Button
               onClick={openStartModal}
@@ -163,7 +157,7 @@ See you there!`);
             </div>
             <h3 className="text-xl font-bold text-primary mb-4">Join Meeting</h3>
             <p className="text-secondary mb-6 text-sm">
-              Enter a meeting room name to join an existing video conference with AI-powered features.
+              Enter a meeting room name to join an existing video conference.
             </p>
             <Button
               onClick={() => setShowJoinModal(true)}
