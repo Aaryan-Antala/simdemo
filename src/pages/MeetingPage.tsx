@@ -5,8 +5,15 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
 import MeetingControls from '../components/MeetingControls';
+import MediasoupMeeting from '../components/MediasoupMeeting';
 import GlassCard from '../components/ui/GlassCard';
 import Button from '../components/ui/Button';
+const VITE_AI_API_URL = import.meta.env.VITE_AI_API_URL;
+const VITE_API_URL = import.meta.env.VITE_API_URL;
+const VITE_MEDIA_API_URL = import.meta.env.VITE_MEDIA_API_URL;
+const VITE_WORKSPACE_API_URL = import.meta.env.VITE_WORKSPACE_API_URL;
+const VITE_APP_URL = import.meta.env.VITE_APP_URL;
+const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL;
 
 const MeetingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -16,6 +23,8 @@ const MeetingPage: React.FC = () => {
     roomName: string;
     displayName: string;
   } | null>(null);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Check for room parameter in URL
   useEffect(() => {
@@ -36,9 +45,6 @@ const MeetingPage: React.FC = () => {
     // Update URL to include room parameter
     const newUrl = `${window.location.pathname}?room=${encodeURIComponent(roomName)}`;
     window.history.replaceState({}, '', newUrl);
-    
-    // TODO: Integrate with your new video service here
-    console.log('Starting meeting:', { roomName, displayName });
   };
 
   const handleJoinMeeting = (roomName: string, displayName: string) => {
@@ -46,9 +52,6 @@ const MeetingPage: React.FC = () => {
     // Update URL to include room parameter
     const newUrl = `${window.location.pathname}?room=${encodeURIComponent(roomName)}`;
     window.history.replaceState({}, '', newUrl);
-    
-    // TODO: Integrate with your new video service here
-    console.log('Joining meeting:', { roomName, displayName });
   };
 
   const handleLeaveMeeting = () => {
@@ -57,72 +60,147 @@ const MeetingPage: React.FC = () => {
     window.history.replaceState({}, '', window.location.pathname);
   };
 
-  // If in a meeting, show placeholder for your new video service
+  const copyMeetingLink = async () => {
+    if (currentMeeting) {
+      const meetingLink = `${window.location.origin}/meetings?room=${encodeURIComponent(currentMeeting.roomName)}`;
+      try {
+        await navigator.clipboard.writeText(meetingLink);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (error) {
+        console.error('Failed to copy meeting link:', error);
+      }
+    }
+  };
+
+  const shareViaEmail = () => {
+    if (!currentMeeting) return;
+    
+    const subject = encodeURIComponent(`Join my video meeting: ${currentMeeting.roomName}`);
+    const body = encodeURIComponent(`Hi! 
+
+I'd like to invite you to join my video meeting.
+
+Meeting Room: ${currentMeeting.roomName}
+Meeting Link: ${window.location.origin}/meetings?room=${encodeURIComponent(currentMeeting.roomName)}
+
+To join:
+1. Click the link above or go to ${window.location.origin}/meetings
+2. Click "Join Meeting"
+3. Enter the room name: ${currentMeeting.roomName}
+4. Enter your name and join!
+
+See you there!`);
+    
+    window.open(`mailto:?subject=${subject}&body=${body}`);
+  };
+
+  // If in a meeting, show the meeting interface with invite options
   if (currentMeeting) {
     return (
       <div className="min-h-screen bg-primary">
-        {/* Header */}
-        <header className="glass-panel border-0 border-b silver-border">
-          <div className="max-w-7xl mx-auto container-padding">
-            <div className="flex justify-between items-center py-4">
-              <div className="flex items-center space-x-4">
-                <motion.button
-                  onClick={handleLeaveMeeting}
-                  className="glass-panel p-2 rounded-full glass-panel-hover"
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <ArrowLeft className="w-5 h-5 text-secondary" />
-                </motion.button>
-                <div>
-                  <h1 className="text-lg font-bold gradient-gold-silver">
-                    Video Meeting: {currentMeeting.roomName}
-                  </h1>
-                  <p className="text-xs text-secondary">
-                    {currentMeeting.displayName} • Ready for new video service
-                  </p>
-                </div>
-              </div>
-              
-              <div className="flex items-center space-x-3">
-                <ThemeToggle />
-              </div>
-            </div>
-          </div>
-        </header>
+        {/* Meeting Header with Invite Button */}
+        {/* <div className="absolute top-4 right-4 z-50">
+          <Button
+            onClick={() => setShowInviteModal(true)}
+            variant="secondary"
+            size="sm"
+            className="flex items-center space-x-2"
+          >
+            <Share2 className="w-4 h-4" />
+            <span>Invite Others</span>
+          </Button>
+        </div> */}
 
-        {/* Meeting Placeholder */}
-        <main className="flex-1 flex items-center justify-center p-8">
-          <div className="max-w-2xl mx-auto text-center">
-            <GlassCard className="p-12" goldBorder>
-              <Video className="w-24 h-24 text-secondary mx-auto mb-8 opacity-50" />
-              <h2 className="text-3xl font-bold gradient-gold-silver mb-6">
-                Ready for Your New Video Service
-              </h2>
-              <div className="space-y-4 text-left">
-                <div className="glass-panel p-4 rounded-lg">
-                  <h3 className="font-bold text-primary mb-2">Meeting Details:</h3>
-                  <p className="text-secondary">Room: {currentMeeting.roomName}</p>
-                  <p className="text-secondary">Display Name: {currentMeeting.displayName}</p>
+        <MediasoupMeeting
+          roomName={currentMeeting.roomName}
+          displayName={currentMeeting.displayName}
+          onLeave={handleLeaveMeeting}
+        />
+
+        {/* Invite Modal */}
+        {showInviteModal && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="w-full max-w-md"
+            >
+              <GlassCard className="p-8" goldBorder>
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-bold gradient-gold-silver">Invite Others</h2>
+                  <button
+                    onClick={() => setShowInviteModal(false)}
+                    className="text-secondary hover:text-primary"
+                  >
+                    ×
+                  </button>
                 </div>
-                <div className="glass-panel p-4 rounded-lg bg-blue-500/10 border-blue-500/30">
-                  <h3 className="font-bold text-blue-400 mb-2">Integration Ready:</h3>
-                  <p className="text-secondary text-sm">
-                    This is where you can integrate your new video conferencing service. 
-                    The meeting controls and room management are already set up.
-                  </p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-primary mb-2">
+                      Room Name
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={currentMeeting.roomName}
+                        readOnly
+                        className="flex-1 glass-panel rounded-lg px-4 py-3 text-primary bg-gray-500/10"
+                      />
+                      <Button
+                        onClick={() => navigator.clipboard.writeText(currentMeeting.roomName)}
+                        variant="ghost"
+                        size="sm"
+                        className="px-3"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-primary mb-2">
+                      Meeting Link
+                    </label>
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={`${window.location.origin}/meetings?room=${encodeURIComponent(currentMeeting.roomName)}`}
+                        readOnly
+                        className="flex-1 glass-panel rounded-lg px-4 py-3 text-primary bg-gray-500/10 text-sm"
+                      />
+                      <Button
+                        onClick={copyMeetingLink}
+                        variant="ghost"
+                        size="sm"
+                        className="px-3"
+                      >
+                        {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Button
+                      onClick={shareViaEmail}
+                      variant="secondary"
+                      className="w-full justify-start"
+                    >
+                      <Share2 className="w-4 h-4 mr-2" />
+                      Share via Email
+                    </Button>
+                  </div>
+
+                  <div className="text-xs text-secondary">
+                    Share the room name or link with others so they can join your meeting.
+                  </div>
                 </div>
-              </div>
-              <Button
-                onClick={handleLeaveMeeting}
-                variant="secondary"
-                className="mt-6"
-              >
-                Leave Meeting
-              </Button>
-            </GlassCard>
+              </GlassCard>
+            </motion.div>
           </div>
-        </main>
+        )}
       </div>
     );
   }
@@ -148,7 +226,7 @@ const MeetingPage: React.FC = () => {
                   Video Meetings
                 </h1>
                 <p className="text-xs text-secondary">
-                  Ready for your new video service integration
+                  Powered by Mediasoup + AI Assistant
                 </p>
               </div>
             </div>
@@ -178,8 +256,8 @@ const MeetingPage: React.FC = () => {
               transition={{ delay: 0.1 }}
               className="text-lg text-secondary max-w-2xl mx-auto mb-8"
             >
-              Professional video conferencing with AI-powered features. 
-              Ready for integration with your preferred video service.
+              Professional video conferencing with AI-powered transcription, note-taking, and meeting summaries. 
+              Built with Mediasoup for superior performance and reliability.
             </motion.p>
 
             {/* Features Grid */}
@@ -318,17 +396,50 @@ const MeetingPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Integration Ready Notice */}
+          {/* Technical Advantages */}
           <div className="mt-20">
-            <GlassCard className="p-8 text-center" goldBorder>
-              <h3 className="text-2xl font-bold gradient-gold-silver mb-4">
-                Ready for Video Service Integration
-              </h3>
-              <p className="text-secondary max-w-2xl mx-auto">
-                The meeting infrastructure is prepared for your new video conferencing service. 
-                Room management, user controls, and AI features are all ready to be connected.
-              </p>
-            </GlassCard>
+            <div className="text-center mb-12">
+              <motion.h2
+                initial={{ y: 30, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="text-3xl font-bold gradient-gold-silver mb-4"
+              >
+                Why Mediasoup?
+              </motion.h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+              {[
+                {
+                  title: 'Superior Performance',
+                  description: 'Low latency, high quality video with adaptive bitrate streaming'
+                },
+                {
+                  title: 'Scalable Architecture',
+                  description: 'Handle hundreds of participants with efficient resource usage'
+                },
+                {
+                  title: 'Full Control',
+                  description: 'Complete customization and control over your meeting experience'
+                },
+                {
+                  title: 'Open Source',
+                  description: 'Free, transparent, and continuously improved by the community'
+                }
+              ].map((advantage, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ y: 30, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.5 + index * 0.1 }}
+                >
+                  <GlassCard className="p-6" hover>
+                    <h3 className="font-bold text-primary mb-3">{advantage.title}</h3>
+                    <p className="text-secondary text-sm">{advantage.description}</p>
+                  </GlassCard>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </div>
       </main>
